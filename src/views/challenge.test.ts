@@ -446,6 +446,9 @@ describe('挑战页挂载', () => {
     await mountChallenge(document.body, 'zh', challenge.slug);
     const [, firstOptions] = createLeanPanel.mock.calls[0] as [HTMLElement, { autoStart: boolean }];
     expect(firstOptions.autoStart).toBe(false);
+    expect(document.body.querySelector<HTMLElement>('[data-role="status"]')?.dataset.state).toBe(
+      'idle',
+    );
     expect(document.body.querySelector('[data-role="runtime-notice"]')?.textContent).toContain(
       '102 MB',
     );

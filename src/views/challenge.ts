@@ -493,6 +493,9 @@ export const mountChallenge = async (
     }
   };
   earlyStartEl?.addEventListener('click', onEarlyStart, { once: true });
+  if (earlyStatusEl && !earlyStatusEl.dataset.state) {
+    earlyStatusEl.dataset.state = 'idle';
+  }
 
   let createLeanPanel: typeof import('../components/lean-panel').createLeanPanel;
   try {
