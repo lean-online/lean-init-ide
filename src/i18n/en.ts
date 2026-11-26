@@ -48,6 +48,7 @@ export const en: Messages = {
     ctaPrimary: 'Start the first lesson',
     continueCta: 'Continue learning',
     ctaSecondary: 'Open the playground',
+    ctaArcade: '🎮 Play Proof Arcade',
     featuresTitle: 'Under the hood',
     features: [
       {
@@ -103,14 +104,53 @@ export const en: Messages = {
     },
   },
   challenges: {
-    eyebrow: 'Math challenges',
-    title: 'Play the Proof Arcade in Lean',
-    lead: 'A plain-language Lean arcade with four arenas: Free Arena, Truth Court, Contract Hunt and Open Conjecture Hall. Every puzzle starts with a human question, and the "--" comments walk you through the code. No programming background is needed.',
+    eyebrow: 'Proof Arcade · Tower Ladder',
+    title: 'Proof Tower: Climb from 1-Tap rfl to Formal Contracts',
+    lead: 'A plain-language Lean arcade: climb the 6-floor Proof Tower with real tactics (0 MB instant), or crack 11 full-editor math puzzles.',
     cardCta: 'Start the challenge',
+    tower: {
+      eyebrow: 'PROOF TOWER · 6-FLOOR CORE LADDER',
+      title: 'Play real Lean 4 tactic cards to shatter each Boss shield',
+      subtitle: 'No boilerplate, no forms—watch the active ⊢ goal shrink on every move.',
+      floorBadge: (level) => `${level}F`,
+      rankPrefix: 'Ladder Rank',
+      comboLabel: (combo) => `Combo ×${combo}`,
+      spellbookTitle: 'Unlocked Spellbook',
+      spellbookEmpty: 'Defeat 1F Mirror Slime to unlock your first spell',
+      hypothesesLabel: 'Assumptions (Your Pack)',
+      activeGoalLabel: 'Active Goal (Target)',
+      queuedGoalLabel: 'Queued Shield',
+      shieldsLeft: (count) =>
+        count === 0 ? '0 shields left' : `${count} shield${count === 1 ? '' : 's'} left`,
+      playedLabel: 'Assembled Lean proof steps:',
+      undoButton: '↩ Undo step',
+      resetButton: '↺ Reset floor',
+      idleLog: 'Inspect the Active Goal below and play a tactic card to strike!',
+      clearedStamp: 'FLOOR CLEARED',
+      clearedTitle: (monster) => `⚔️ Defeated ${monster}!`,
+      unlockedDrop: (skill) => `✨ Unlocked skill: ${skill}`,
+      nextFloorCta: (level, monster) => `Climb to ${level}F · ${monster} →`,
+      allClearedTitle: '🏆 All 6 Proof Tower floors cleared!',
+      allClearedBody:
+        'You have mastered rfl, rw, reverse ←, intro, apply, constructor, unfold and omega in real Lean 4!',
+      posterButton: '🖼️ Generate Tower Poster',
+      toggleCodeButton: '👁️ Show real Lean 4 code',
+      verifyButton: '⚡ Verify with real Lean 4.36 (~102 MB first run)',
+      verifyNote:
+        'Never fetches silently in background—clicking loads the ~102 MB local cache and runs real compilation.',
+      verifiedSeal: '✓ Verified with 0 errors by real Lean 4.36 kernel',
+      verifyingStatus: 'Waking up the Lean 4.36 kernel and compiling this floor…',
+      verifyErrorStatus:
+        'Finish clearing the floor (no remaining goals) before running kernel verification.',
+    },
+    archiveTitle: 'Free Challenge Archive (11 full-editor puzzles)',
+    archiveLead:
+      'Want deeper puzzles after the tower? Enter Truth Court, Contract Hunt, or Open Conjecture Hall with the full Monaco editor.',
     summary: {
       solved: (done, total) => `Solved ${done} / ${total}`,
       badges: (automation, handcrafted, termMode) =>
         `Style badges: ⚡ ${automation} · 🛠️ ${handcrafted} · λ ${termMode}`,
+      progressPct: (pct) => `Mastery ${pct}%`,
     },
     modes: {
       classic: '⚡ Free Arena',
@@ -168,10 +208,32 @@ export const en: Messages = {
       goalsRemaining: (count) => `${count} goal${count === 1 ? '' : 's'} left to prove`,
       goalsNone:
         'No goals right now: put the cursor inside the proof and the Goal panel updates live',
-      tacticsTitle: 'Play cards: one click loads a full proof in that style',
+      tacticsTitle: 'Play cards: reference proofs & style badges',
       tacticsHint:
-        'Click any play card to load a complete, compilable proof in that style into the editor—or edit the code directly below and watch Lean respond live.',
+        'Try writing a few lines yourself first; reveal or click a play card whenever you want to switch styles or collect all three badges.',
+      tacticsDisclosure: '🃏 Stuck or hunting style badges? Reveal reference play cards',
       verdictTacticsDisclosure: 'Stuck? Reveal play cards (contains truth spoiler)',
+      runtimeNotice:
+        'The interactive lab runs in 0 MB. Starting the real Lean 4.36 verifier below downloads ~102 MB on first run (cached locally afterward) and never fetches silently.',
+      sfxOn: '🔊 SFX On',
+      sfxOff: '🔇 Muted',
+      timerLabel: (formatted) => `⏱️ ${formatted}`,
+      rankLabel: (rank) => `Rank ${rank}`,
+      stampLabels: {
+        classic: 'Q.E.D. VERIFIED',
+        verdict: 'GUILTY · VERDICT SEALED',
+        bugfix: 'PATCHED · BUG ELIMINATED',
+        bounty: 'BOUNTY CLAIMED',
+      },
+      poster: {
+        nicknameLabel: 'Challenger name (optional)',
+        nicknamePlaceholder: 'Stamp your handle on the card…',
+        generateButton: '🖼️ Generate Share Poster',
+        downloadButton: '⬇️ Save PNG Poster',
+        previewAlt: 'Lean Proof Arcade victory poster preview',
+        unavailable: 'Canvas rendering is unavailable in this browser; copy the text card instead.',
+        generated: 'Poster ready! Save the PNG to share.',
+      },
       verdictTitle: 'Pick a stance first',
       verdictHint:
         'The prompt does not reveal the answer. Load the template for one stance; you can switch back at any time.',

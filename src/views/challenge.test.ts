@@ -441,6 +441,60 @@ describe('挑战页挂载', () => {
     );
   });
 
+  it('默认不静默后台启动 102MB 运行时，仅在全局开启自动启动或显式提交时才 autoStart', async () => {
+    document.body.innerHTML = renderChallenge('zh', challenge.slug);
+    await mountChallenge(document.body, 'zh', challenge.slug);
+    const [, firstOptions] = createLeanPanel.mock.calls[0] as [HTMLElement, { autoStart: boolean }];
+    expect(firstOptions.autoStart).toBe(false);
+    expect(document.body.querySelector<HTMLElement>('[data-role="status"]')?.dataset.state).toBe(
+      'idle',
+    );
+    expect(document.body.querySelector('[data-role="runtime-notice"]')?.textContent).toContain(
+      '102 MB',
+    );
+  });
+
+  it('全站挑战页与列表页英文渲染不含任何中文字符，且列表页挂载 6 层爬塔天梯', () => {
+    expect(renderChallenges('zh')).toContain('data-role="proof-tower"');
+    const enListDoc = new DOMParser().parseFromString(renderChallenges('en'), 'text/html');
+    expect(enListDoc.body.innerHTML).not.toMatch(/[\u4e00-\u9fff]/);
+
+    for (const item of CHALLENGES) {
+      const enHtml = renderChallenge('en', item.slug);
+      const doc = new DOMParser().parseFromString(enHtml, 'text/html');
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
+      const comments: Comment[] = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        comments.push(node as Comment);
+      }
+      for (const comment of comments) comment.remove();
+      expect(doc.body.innerHTML, item.slug).not.toMatch(/[\u4e00-\u9fff]/);
+    }
+  });
+
+  it('通关横幅展示评级并支持生成战报 PNG 海报或优雅降级提示', async () => {
+    document.body.innerHTML = renderChallenge('zh', challenge.slug);
+    await mountChallenge(document.body, 'zh', challenge.slug);
+    const panel = createLeanPanel.mock.results[0]!.value as ReturnType<typeof makePanel>;
+    panel.getCode.mockReturnValue(challenge.solution.zh);
+    const [, options] = createLeanPanel.mock.calls[0] as [
+      HTMLElement,
+      { onDiagnostics: (diagnostics: Array<{ severity?: number }>) => void },
+    ];
+    options.onDiagnostics([]);
+
+    expect(document.body.querySelector('[data-role="result-rank"]')?.textContent).toContain('S');
+    const nick = document.body.querySelector<HTMLInputElement>('[data-role="poster-nickname"]')!;
+    nick.value = '证明侠';
+    nick.dispatchEvent(new Event('input'));
+
+    // jsdom 无真实 canvas 2D 实现时，点击生成应显示友好降级文案而不抛错
+    document.body.querySelector<HTMLButtonElement>('[data-role="generate-poster"]')!.click();
+    expect(document.body.querySelector<HTMLElement>('[data-role="poster-status"]')?.hidden).toBe(
+      false,
+    );
+  });
+
   it('主包加载前点击启动 Lean 会传递 startImmediately，并在加载失败时支持重试', async () => {
     document.body.innerHTML = renderChallenge('zh', challenge.slug);
     const pending = mountChallenge(document.body, 'zh', challenge.slug);

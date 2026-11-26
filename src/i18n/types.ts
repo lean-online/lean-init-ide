@@ -87,6 +87,8 @@ export type Messages = {
     /** 已有进度时的主按钮文案。 */
     continueCta: string;
     ctaSecondary: string;
+    /** 首屏并列的趣味数学闯关入口。 */
+    ctaArcade: string;
     featuresTitle: string;
     features: Array<{ title: string; body: string }>;
     limitsTitle: string;
@@ -116,10 +118,45 @@ export type Messages = {
     title: string;
     lead: string;
     cardCta: string;
+    /** 证明爬塔天梯（6 层递进核心游乐场）。 */
+    tower: {
+      eyebrow: string;
+      title: string;
+      subtitle: string;
+      floorBadge: (level: number) => string;
+      rankPrefix: string;
+      comboLabel: (combo: number) => string;
+      spellbookTitle: string;
+      spellbookEmpty: string;
+      hypothesesLabel: string;
+      activeGoalLabel: string;
+      queuedGoalLabel: string;
+      shieldsLeft: (count: number) => string;
+      playedLabel: string;
+      undoButton: string;
+      resetButton: string;
+      idleLog: string;
+      clearedStamp: string;
+      clearedTitle: (monster: string) => string;
+      unlockedDrop: (skill: string) => string;
+      nextFloorCta: (level: number, monster: string) => string;
+      allClearedTitle: string;
+      allClearedBody: string;
+      posterButton: string;
+      toggleCodeButton: string;
+      verifyButton: string;
+      verifyNote: string;
+      verifiedSeal: string;
+      verifyingStatus: string;
+      verifyErrorStatus: string;
+    };
+    archiveTitle: string;
+    archiveLead: string;
     /** 列表页顶部的通关与流派勋章统计。 */
     summary: {
       solved: (done: number, total: number) => string;
       badges: (automation: number, handcrafted: number, termMode: number) => string;
+      progressPct: (pct: number) => string;
     };
     /** 四大主题区的模式标签。 */
     modes: {
@@ -168,7 +205,28 @@ export type Messages = {
       goalsNone: string;
       tacticsTitle: string;
       tacticsHint: string;
+      tacticsDisclosure: string;
       verdictTacticsDisclosure: string;
+      runtimeNotice: string;
+      sfxOn: string;
+      sfxOff: string;
+      timerLabel: (formatted: string) => string;
+      rankLabel: (rank: 'S' | 'A' | 'B') => string;
+      stampLabels: {
+        classic: string;
+        verdict: string;
+        bugfix: string;
+        bounty: string;
+      };
+      poster: {
+        nicknameLabel: string;
+        nicknamePlaceholder: string;
+        generateButton: string;
+        downloadButton: string;
+        previewAlt: string;
+        unavailable: string;
+        generated: string;
+      };
       /** 真假审判庭：先选立场的开关。 */
       verdictTitle: string;
       verdictHint: string;
