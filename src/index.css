@@ -176,6 +176,22 @@
   }
 }
 
+@keyframes tower-boss-hit {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-6px);
+  }
+  50% {
+    transform: translateX(6px);
+  }
+  75% {
+    transform: translateX(-3px);
+  }
+}
+
 @layer components {
   .run-bar-indeterminate {
     width: 100%;
@@ -194,11 +210,16 @@
   .arcade-confetti-piece {
     animation: arcade-confetti-pop 1.15s cubic-bezier(0.15, 0.85, 0.35, 1) var(--delay, 0s) forwards;
   }
+
+  .tower-boss-hit {
+    animation: tower-boss-hit 0.32s ease-out;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .arcade-stamp,
-  .arcade-confetti-piece {
+  .arcade-confetti-piece,
+  .tower-boss-hit {
     animation: none !important;
   }
 }

@@ -2,9 +2,9 @@
  * 通关战报 PNG 海报纯前端生成：使用 Canvas 2D 输出 data:image/png URL，
  * 不引入外链字体与外部图片资源，完全兼容严格 CSP（img-src 'self' data:）。
  */
-import type { ArcadeRank } from './challenge-stage';
 import type { ChallengeMode } from './exercise';
 import type { Locale } from './i18n';
+import type { ArcadeRank } from './proof-tower';
 
 export type VictoryPosterInput = {
   locale: Locale;

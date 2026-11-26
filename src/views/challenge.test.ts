@@ -451,7 +451,11 @@ describe('挑战页挂载', () => {
     );
   });
 
-  it('0 MB 互动舞台在所有关卡下都能工作，英文渲染不含任何中文字符', async () => {
+  it('全站挑战页与列表页英文渲染不含任何中文字符，且列表页挂载 6 层爬塔天梯', () => {
+    expect(renderChallenges('zh')).toContain('data-role="proof-tower"');
+    const enListDoc = new DOMParser().parseFromString(renderChallenges('en'), 'text/html');
+    expect(enListDoc.body.innerHTML).not.toMatch(/[\u4e00-\u9fff]/);
+
     for (const item of CHALLENGES) {
       const enHtml = renderChallenge('en', item.slug);
       const doc = new DOMParser().parseFromString(enHtml, 'text/html');
@@ -463,76 +467,6 @@ describe('挑战页挂载', () => {
       for (const comment of comments) comment.remove();
       expect(doc.body.innerHTML, item.slug).not.toMatch(/[\u4e00-\u9fff]/);
     }
-
-    // 自然数减法法庭对质台：交换 a/b 后抓出反例并呈交 Lean 面板
-    document.body.innerHTML = renderChallenge('zh', 'nat-sub-trap');
-    await mountChallenge(document.body, 'zh', 'nat-sub-trap');
-    const panel = createLeanPanel.mock.results[0]!.value as ReturnType<typeof makePanel>;
-    const submitBtn = document.body.querySelector<HTMLButtonElement>('[data-role="stage-submit"]')!;
-    expect(submitBtn.disabled).toBe(true);
-    document.body.querySelector<HTMLButtonElement>('[data-role="stage-swap"]')!.click();
-    expect(submitBtn.disabled).toBe(false);
-    submitBtn.click();
-    expect(panel.setCode).toHaveBeenCalledWith(
-      expect.stringContaining('abbrev counter_a : Nat := 3'),
-      { focus: true },
-    );
-
-    // 偶数和拆弹台
-    document.body.innerHTML = renderChallenge('zh', 'even-sum-split');
-    await mountChallenge(document.body, 'zh', 'even-sum-split');
-    const evenSubmit = document.body.querySelector<HTMLButtonElement>(
-      '[data-role="stage-submit"]',
-    )!;
-    expect(evenSubmit.disabled).toBe(true);
-    document.body.querySelector<HTMLButtonElement>('[data-role="stage-bump"]')!.click();
-    expect(evenSubmit.disabled).toBe(false);
-    evenSubmit.click();
-
-    // 双重否定门控切换
-    document.body.innerHTML = renderChallenge('zh', 'double-negation');
-    await mountChallenge(document.body, 'zh', 'double-negation');
-    document.body.querySelector<HTMLButtonElement>('[data-role="dn-toggle"]')!.click();
-    expect(document.body.querySelector('[data-role="dn-p"]')?.textContent).toContain('False');
-    document.body.querySelector<HTMLButtonElement>('[data-role="dn-select-true"]')!.click();
-
-    // 钱包 ATM 与区间裁剪模拟器
-    document.body.innerHTML = renderChallenge('zh', 'budget-withdraw');
-    await mountChallenge(document.body, 'zh', 'budget-withdraw');
-    document
-      .querySelector<HTMLButtonElement>('[data-role="stage-preset"][data-balance="30"]')!
-      .click();
-    expect(document.body.querySelector('[data-role="stage-feedback"]')?.textContent).toContain(
-      '130',
-    );
-    document.body.querySelector<HTMLButtonElement>('[data-role="stage-focus-editor"]')!.click();
-
-    document.body.innerHTML = renderChallenge('zh', 'clamp-contract');
-    await mountChallenge(document.body, 'zh', 'clamp-contract');
-    document.querySelector<HTMLButtonElement>('[data-role="stage-preset"][data-lo="20"]')!.click();
-    expect(document.body.querySelector('[data-role="stage-feedback"]')?.textContent).toContain(
-      '倒置',
-    );
-
-    // 考拉兹与哥德巴赫实验室 + 音效开关
-    document.body.innerHTML = renderChallenge('zh', 'collatz-bounty');
-    await mountChallenge(document.body, 'zh', 'collatz-bounty');
-    document.querySelector<HTMLButtonElement>('[data-role="stage-preset"][data-n="6"]')!.click();
-    expect(document.body.querySelector('[data-role="stage-feedback"]')?.textContent).toContain('8');
-    const sfxBtn = document.body.querySelector<HTMLButtonElement>('[data-role="toggle-sfx"]')!;
-    sfxBtn.click();
-    expect(sfxBtn.getAttribute('aria-pressed')).toBe('false');
-
-    document.body.innerHTML = renderChallenge('zh', 'goldbach-bounty');
-    await mountChallenge(document.body, 'zh', 'goldbach-bounty');
-    const goldbachInput = document.body.querySelector<HTMLInputElement>(
-      '[data-role="stage-input-n"]',
-    )!;
-    goldbachInput.value = '15';
-    document.body.querySelector<HTMLButtonElement>('[data-role="stage-run-goldbach"]')!.click();
-    expect(document.body.querySelector('[data-role="stage-feedback"]')?.textContent).toContain(
-      '偶数',
-    );
   });
 
   it('通关横幅展示评级并支持生成战报 PNG 海报或优雅降级提示', async () => {

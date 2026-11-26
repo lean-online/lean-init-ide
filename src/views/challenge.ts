@@ -16,7 +16,6 @@ import {
 import { countGoalTargets } from '../challenge-goal';
 import { renderVictoryPosterDataUrl } from '../challenge-poster';
 import { ChallengeProgressStore, type ChallengeRecord } from '../challenge-progress';
-import { computeChallengeRank, formatElapsedMs, hasInteractiveLab } from '../challenge-stage';
 import {
   challengeBySlug,
   challengePath,
@@ -38,6 +37,7 @@ import {
 import { issueUrl } from '../feedback';
 import { messagesFor, type Locale } from '../i18n';
 import { renderNotFound } from '../page-meta';
+import { computeChallengeRank, formatElapsedMs } from '../proof-tower';
 import { getAutoStart } from '../settings';
 import {
   badgeLabel,
@@ -46,8 +46,8 @@ import {
   formatRecordSummary,
   renderProgressBackup,
 } from './challenge-progress-ui';
-import { bindChallengeStage, renderChallengeStage } from './challenge-stage-ui';
 import { escapeHtml } from './html';
+import { mountProofTower, renderProofTower } from './proof-tower-ui';
 
 /** 把判题需要的最小结构拼出来，视图不需要知道数据表的其余字段。 */
 const challengeSpec = (challenge: Challenge, locale: Locale): ChallengeSpec => ({
@@ -122,17 +122,11 @@ const renderIntro = (locale: Locale, open = true): string => {
 const challengeCard = (locale: Locale, challenge: Challenge, index: number): string => {
   const t = messagesFor(locale).challenges;
   const style = SECTION_STYLE[challenge.mode];
-  const labBadge = hasInteractiveLab(challenge.slug)
-    ? `<span class="rounded-full border border-ok/35 bg-ok/10 px-2 py-0.5 text-[11px] font-[650] text-ok">${escapeHtml(t.cardLabTag)}</span>`
-    : '';
   return `
     <article data-challenge-slug="${escapeHtml(challenge.slug)}" class="${DEFAULT_CARD_CLASS}">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-1.5">
         <p class="m-0 text-xs uppercase tracking-[0.08em] text-muted">${String(index + 1).padStart(2, '0')}</p>
-        <div class="flex flex-wrap items-center gap-1.5">
-          ${labBadge}
-          <span class="rounded-full border px-2 py-0.5 text-[11px] font-[650] ${style.chip}">${escapeHtml(t.modes[challenge.mode])}</span>
-        </div>
+        <span class="rounded-full border px-2 py-0.5 text-[11px] font-[650] ${style.chip}">${escapeHtml(t.modes[challenge.mode])}</span>
       </div>
       <h3 class="m-0 mb-2 text-[16px] font-bold">${escapeHtml(challenge.title[locale])}</h3>
       <p class="m-0 mb-3 flex-1 text-sm leading-relaxed text-muted">${escapeHtml(challenge.summary[locale])}</p>
@@ -143,38 +137,6 @@ const challengeCard = (locale: Locale, challenge: Challenge, index: number): str
         <a class="${ghostButtonClass}" href="${playgroundLink(locale, challenge.slug)}">${t.detail.openInPlayground}</a>
       </div>
     </article>`;
-};
-
-const renderFeaturedSpotlight = (locale: Locale): string => {
-  const t = messagesFor(locale).challenges;
-  const cards = t.featured.items
-    .map(
-      (item) => `
-      <a
-        data-featured-slug="${escapeHtml(item.slug)}"
-        href="${challengePath(locale, item.slug)}"
-        class="group flex flex-col justify-between rounded-xl border border-warn/35 bg-panel-soft p-4 no-underline transition hover:border-warn"
-      >
-        <div>
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-bold text-warn">${escapeHtml(item.tag)}</span>
-            <span class="rounded-full border border-ok/40 bg-ok/10 px-2 py-0.5 text-[11px] font-[650] text-ok">${escapeHtml(t.featured.zeroMbTag)}</span>
-          </div>
-          <p class="m-0 mt-2 text-sm leading-relaxed text-fg group-hover:text-accent">${escapeHtml(item.hook)}</p>
-        </div>
-        <span class="mt-3 text-xs font-[650] text-accent">${escapeHtml(t.cardCta)} →</span>
-      </a>`,
-    )
-    .join('');
-
-  return `
-    <section data-role="featured-challenges" class="mt-5 rounded-2xl border border-warn/40 bg-panel p-[clamp(14px,2vw,22px)]">
-      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="m-0 text-[16px] font-bold text-warn">${escapeHtml(t.featured.title)}</h2>
-        <p class="m-0 text-xs text-muted">${escapeHtml(t.featured.subtitle)}</p>
-      </div>
-      <div class="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">${cards}</div>
-    </section>`;
 };
 
 export const renderChallenges = (locale: Locale): string => {
@@ -207,31 +169,41 @@ export const renderChallenges = (locale: Locale): string => {
       <h1 class="mt-0 mb-4 text-[clamp(28px,4.4vw,42px)] tracking-[-0.02em]">${t.title}</h1>
       <p class="mt-0 mb-0 max-w-[640px] text-[clamp(15px,1.6vw,18px)] leading-relaxed text-muted">${t.lead}</p>
     </section>
-    <section
-      data-role="challenge-summary"
-      class="mt-5 rounded-xl border border-line bg-panel px-4 py-3 text-[13px] font-[650]"
-    >
-      <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <span data-role="summary-solved">${escapeHtml(t.summary.solved(0, CHALLENGES.length))}</span>
-        <span data-role="summary-badges" class="text-muted">${escapeHtml(t.summary.badges(0, 0, 0))}</span>
-        <span data-role="summary-pct" class="font-mono text-xs text-accent">${escapeHtml(t.summary.progressPct(0))}</span>
-        ${renderProgressBackup(t)}
+
+    ${renderProofTower(locale)}
+
+    <section class="mt-[clamp(32px,5vw,52px)]">
+      <div class="max-w-[760px]">
+        <h2 class="m-0 text-[clamp(20px,2.6vw,28px)] tracking-[-0.01em]">${escapeHtml(t.archiveTitle)}</h2>
+        <p class="mt-1.5 mb-0 text-sm leading-relaxed text-muted">${escapeHtml(t.archiveLead)}</p>
       </div>
-      <div class="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-panel-soft">
-        <div data-role="summary-progress-bar" class="h-full rounded-full bg-ok transition-all duration-300" style="width: 0%"></div>
-      </div>
+      <section
+        data-role="challenge-summary"
+        class="mt-4 rounded-xl border border-line bg-panel px-4 py-3 text-[13px] font-[650]"
+      >
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <span data-role="summary-solved">${escapeHtml(t.summary.solved(0, CHALLENGES.length))}</span>
+          <span data-role="summary-badges" class="text-muted">${escapeHtml(t.summary.badges(0, 0, 0))}</span>
+          <span data-role="summary-pct" class="font-mono text-xs text-accent">${escapeHtml(t.summary.progressPct(0))}</span>
+          ${renderProgressBackup(t)}
+        </div>
+        <div class="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-panel-soft">
+          <div data-role="summary-progress-bar" class="h-full rounded-full bg-ok transition-all duration-300" style="width: 0%"></div>
+        </div>
+      </section>
+      <div class="mt-4 max-w-[760px]">${renderIntro(locale, false)}</div>
+      <section
+        data-role="challenge-list"
+        class="mt-5 flex flex-col gap-4"
+      >${sections}</section>
     </section>
-    ${renderFeaturedSpotlight(locale)}
-    <section class="mt-4 max-w-[760px]">${renderIntro(locale, false)}</section>
-    <section
-      data-role="challenge-list"
-      class="mt-[clamp(24px,3.4vw,36px)] flex flex-col gap-4"
-    >${sections}</section>
   `;
 };
 
-/** 浏览器挂载列表页：读取本地战绩、刷新卡片勋章与进度条并绑定 JSON 备份导入导出。 */
+/** 浏览器挂载列表页：先激活 6 层爬塔天梯，再读取 11 道经典挑战战绩与备份绑定。 */
 export const mountChallenges = (root: HTMLElement, locale: Locale): void => {
+  mountProofTower(root, locale);
+
   const t = messagesFor(locale).challenges;
   const store = new ChallengeProgressStore();
   const slugs = CHALLENGES.map((challenge) => challenge.slug);
@@ -357,9 +329,7 @@ export const renderChallenge = (locale: Locale, slug: string | undefined): strin
         <p data-role="challenge-record" class="mt-2 mb-0 text-xs font-[650] text-ok" hidden></p>
       </div>
 
-      ${renderChallengeStage(challenge, locale)}
-
-      <p data-role="runtime-notice" class="mt-3 mb-0 max-w-[760px] rounded-xl border border-line bg-panel px-3.5 py-2 text-xs leading-relaxed text-muted">${escapeHtml(detail.runtimeNotice)}</p>
+      <p data-role="runtime-notice" class="mt-4 mb-0 max-w-[760px] rounded-xl border border-line bg-panel px-3.5 py-2 text-xs leading-relaxed text-muted">${escapeHtml(detail.runtimeNotice)}</p>
 
       ${verdictSwitch}
 
@@ -500,75 +470,27 @@ export const mountChallenge = async (
     }
   };
 
-  let startRequested = false;
-  let pendingStageCode: string | null = null;
-  let pendingStageBranch: 'true' | 'false' | undefined;
-  let activePanel: ReturnType<typeof import('../components/lean-panel').createLeanPanel> | null =
-    null;
-
   const earlyStartEl = panelHost.querySelector<HTMLButtonElement>('[data-role="start"]');
   const earlyStatusEl = panelHost.querySelector<HTMLElement>('[data-role="status"]');
-  const requestStartEngine = () => {
-    if (!activePanel) {
-      startRequested = true;
-      if (earlyStartEl) earlyStartEl.disabled = true;
-      if (earlyStatusEl) {
-        earlyStatusEl.textContent = messagesFor(locale).playground.statusLoading;
-        earlyStatusEl.dataset.state = 'loading';
-      }
-      return;
-    }
-    const statusEl = panelHost.querySelector<HTMLElement>('[data-role="status"]');
-    if (statusEl?.dataset.state === 'idle') {
-      panelHost.querySelector<HTMLButtonElement>('[data-role="start"]')?.click();
-    }
-  };
-
-  const applySubmittedCode = (code: string, branch?: 'true' | 'false') => {
-    if (branch) syncVerdictButtons(branch);
-    if (!activePanel) {
-      pendingStageCode = code;
-      pendingStageBranch = branch;
-      requestStartEngine();
-      panelHost.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-      return;
-    }
-    activePanel.setCode(code, { focus: true });
-    if (panelHost.dataset.mode === 'solution') delete panelHost.dataset.mode;
-    requestStartEngine();
-    panelHost.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-  };
-
-  // 先于 Monaco 异步导入绑定 0 MB 互动舞台，确保玩家进页 0ms 即可开始操作。
-  const stageCtrl = bindChallengeStage(root, challenge, locale, {
-    onSubmitCode: applySubmittedCode,
-    onSelectVerdictTrue: () => {
-      const trueStarter = challenge.verdictBranches?.trueStarter[locale];
-      if (!trueStarter) return;
-      applySubmittedCode(trueStarter, 'true');
-    },
-    onFocusEditor: () => {
-      panelHost.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-      requestStartEngine();
-      activePanel?.focus();
-    },
-    onInteraction: refreshTimer,
-    onSound: (kind) => playArcadeSound(kind, sfxEnabled),
-  });
+  let startRequested = false;
 
   const paintGoals = (text: string) => {
     const count = countGoalTargets(text);
     if (progressEl) {
       progressEl.textContent = count > 0 ? t.detail.goalsRemaining(count) : t.detail.goalsNone;
     }
-    stageCtrl.updateGoalHp(text.trim().length === 0 ? 0 : count);
   };
   paintGoals('');
 
   // Monaco 主包异步加载期间先记下「启动 Lean」点击：低内存设备不会自动启动，
   // 用户看到按钮就点是很自然的动作，不能因为装配还没完成把这次点击吞掉。
   const onEarlyStart = () => {
-    requestStartEngine();
+    startRequested = true;
+    if (earlyStartEl) earlyStartEl.disabled = true;
+    if (earlyStatusEl) {
+      earlyStatusEl.textContent = messagesFor(locale).playground.statusLoading;
+      earlyStatusEl.dataset.state = 'loading';
+    }
   };
   earlyStartEl?.addEventListener('click', onEarlyStart, { once: true });
 
@@ -638,14 +560,12 @@ export const mountChallenge = async (
     if (!isChallengeSolved(spec, code, diagnostics)) {
       resultEl.hidden = true;
       shareText = '';
-      stageCtrl.updateBountyTiers([]);
       return;
     }
 
     const wasHidden = resultEl.hidden;
     const style = analyzeProofStyle(code);
     const tiers = challenge.mode === 'bounty' ? solvedChallengeTiers(spec, code, diagnostics) : [];
-    stageCtrl.updateBountyTiers(tiers);
     const record = store.recordRun(challenge.slug, {
       badges: style.badges,
       tiers,
@@ -685,7 +605,7 @@ export const mountChallenge = async (
   const saveData = (navigator as { connection?: { saveData?: boolean } }).connection?.saveData;
   const panel = createLeanPanel(panelHost, {
     variant: 'full',
-    code: pendingStageCode ?? challenge.starter[locale],
+    code: challenge.starter[locale],
     locale,
     draftKey: challengeDraftKey(challenge.slug),
     // 不在后台偷偷拉取 102MB：遵循全局自动启动设置 + 内存/省流档位守门。
@@ -694,12 +614,7 @@ export const mountChallenge = async (
     onGoal: paintGoals,
     onDiagnostics: paintResult,
   });
-  activePanel = panel;
   readCode = panel.getCode;
-  if (pendingStageCode !== null) {
-    panel.setCode(pendingStageCode, { focus: true });
-    if (pendingStageBranch) syncVerdictButtons(pendingStageBranch);
-  }
   paintExistingRecord(store.get(challenge.slug));
 
   generatePosterBtn?.addEventListener('click', () => {

@@ -104,34 +104,48 @@ export const en: Messages = {
     },
   },
   challenges: {
-    eyebrow: 'Math challenges',
-    title: 'Play the Proof Arcade in Lean',
-    lead: 'A plain-language Lean arcade across four arenas: Truth Court, Contract Hunt, Open Conjecture Hall and Free Arena. Play every 0 MB interactive lab first, then let Lean 4.36 verify.',
+    eyebrow: 'Proof Arcade · Tower Ladder',
+    title: 'Proof Tower: Climb from 1-Tap rfl to Formal Contracts',
+    lead: 'A plain-language Lean arcade: climb the 6-floor Proof Tower with real tactics (0 MB instant), or crack 11 full-editor math puzzles.',
     cardCta: 'Start the challenge',
-    cardLabTag: '🎮 0 MB interactive lab',
-    featured: {
-      title: '30-second picks (play 0 MB lab before booting Lean)',
-      subtitle:
-        'Zero coding required: be a math judge, catch wallet exploits, explore open conjectures',
-      zeroMbTag: '0 MB instant',
-      items: [
-        {
-          slug: 'nat-sub-trap',
-          tag: '⚖️ Math Judge',
-          hook: 'Does (a - b) + b = a always hold? Slide two numbers and watch the compiler catch a crash!',
-        },
-        {
-          slug: 'budget-withdraw',
-          tag: '🚨 Wallet Exploit',
-          hook: 'Withdrawing 30 raises the balance to 130! Trigger the free-money bug, then prove the fix.',
-        },
-        {
-          slug: 'collatz-bounty',
-          tag: '👑 Open Bounty',
-          hook: 'Plot the 111-step Collatz storm for 27, then claim Bronze & Silver proofs in Lean.',
-        },
-      ],
+    tower: {
+      eyebrow: 'PROOF TOWER · 6-FLOOR CORE LADDER',
+      title: 'Play real Lean 4 tactic cards to shatter each Boss shield',
+      subtitle: 'No boilerplate, no forms—watch the active ⊢ goal shrink on every move.',
+      floorBadge: (level) => `${level}F`,
+      rankPrefix: 'Ladder Rank',
+      comboLabel: (combo) => `Combo ×${combo}`,
+      spellbookTitle: 'Unlocked Spellbook',
+      spellbookEmpty: 'Defeat 1F Mirror Slime to unlock your first spell',
+      hypothesesLabel: 'Assumptions (Your Pack)',
+      activeGoalLabel: 'Active Goal (Target)',
+      queuedGoalLabel: 'Queued Shield',
+      shieldsLeft: (count) =>
+        count === 0 ? '0 shields left' : `${count} shield${count === 1 ? '' : 's'} left`,
+      playedLabel: 'Assembled Lean proof steps:',
+      undoButton: '↩ Undo step',
+      resetButton: '↺ Reset floor',
+      idleLog: 'Inspect the Active Goal below and play a tactic card to strike!',
+      clearedStamp: 'FLOOR CLEARED',
+      clearedTitle: (monster) => `⚔️ Defeated ${monster}!`,
+      unlockedDrop: (skill) => `✨ Unlocked skill: ${skill}`,
+      nextFloorCta: (level, monster) => `Climb to ${level}F · ${monster} →`,
+      allClearedTitle: '🏆 All 6 Proof Tower floors cleared!',
+      allClearedBody:
+        'You have mastered rfl, rw, reverse ←, intro, apply, constructor, unfold and omega in real Lean 4!',
+      posterButton: '🖼️ Generate Tower Poster',
+      toggleCodeButton: '👁️ Show real Lean 4 code',
+      verifyButton: '⚡ Verify with real Lean 4.36 (~102 MB first run)',
+      verifyNote:
+        'Never fetches silently in background—clicking loads the ~102 MB local cache and runs real compilation.',
+      verifiedSeal: '✓ Verified with 0 errors by real Lean 4.36 kernel',
+      verifyingStatus: 'Waking up the Lean 4.36 kernel and compiling this floor…',
+      verifyErrorStatus:
+        'Finish clearing the floor (no remaining goals) before running kernel verification.',
     },
+    archiveTitle: 'Free Challenge Archive (11 full-editor puzzles)',
+    archiveLead:
+      'Want deeper puzzles after the tower? Enter Truth Court, Contract Hunt, or Open Conjecture Hall with the full Monaco editor.',
     summary: {
       solved: (done, total) => `Solved ${done} / ${total}`,
       badges: (automation, handcrafted, termMode) =>
@@ -219,117 +233,6 @@ export const en: Messages = {
         previewAlt: 'Lean Proof Arcade victory poster preview',
         unavailable: 'Canvas rendering is unavailable in this browser; copy the text card instead.',
         generated: 'Poster ready! Save the PNG to share.',
-      },
-      stage: {
-        badgeZeroMb: '0 MB instant lab',
-        natSub: {
-          title: '⚖️ Math Courtroom · Counterexample Bench',
-          subtitle:
-            'Do not trust intuition blindly—tune a and b to see when (a - b) + b fails in natural-number arithmetic!',
-          labelA: 'Natural a',
-          labelB: 'Natural b',
-          swapButton: '⇄ Swap a / b',
-          presetTrap: 'Try a=5, b=3',
-          presetSafe: 'Try a=10, b=4',
-          statusSafe: (lhs, rhs) =>
-            `✅ Holds here: left = ${lhs}, right = ${rhs} (not a counterexample yet)`,
-          statusBroken: (a, b, lhs) =>
-            `🔥 Counterexample found! Since ${b} > ${a}, ${a} - ${b} truncates to 0, so (${a} - ${b}) + ${b} = ${lhs} ≠ ${a}!`,
-          submitButton: '⚖️ Submit to Lean Kernel for Final Verdict (~102 MB first run)',
-        },
-        evenSum: {
-          title: '⚖️ Math Courtroom · Parity Counterexample Bench',
-          subtitle:
-            '4 + 6 = 10 feels convincing—assemble two numbers whose sum is even while at least one addend is odd!',
-          labelA: 'Addend a',
-          labelB: 'Addend b',
-          bumpBothButton: '🎲 a+1, b+1',
-          presetEven: 'Try 2 + 2',
-          presetMixed: 'Try 4 + 6',
-          statusSafe: (sum) =>
-            `🔎 Sum is ${sum}, which does not break the claim yet—keep tuning a and b`,
-          statusBroken: (a, b, sum) =>
-            `🔥 Counterexample found! ${a} + ${b} = ${sum} is even, even though an odd addend slipped in!`,
-          submitButton: '⚖️ Submit to Lean Kernel for Final Verdict (~102 MB first run)',
-        },
-        doubleNeg: {
-          title: '⚖️ Logic Gate Bench · P vs ¬¬P',
-          subtitle:
-            'Flip P between True and False to inspect why double negation always holds from P.',
-          toggleButton: '⚡ Toggle truth value of P',
-          stateTrue: 'True',
-          stateFalse: 'False',
-          stepP: 'Proposition P',
-          stepNotP: 'Negation ¬P',
-          stepNotNotP: 'Double negation ¬¬P',
-          insight:
-            'Whenever P holds, assuming ¬P leads straight to contradiction—so ¬¬P always follows. No counterexample exists!',
-          switchToTrueButton: '⚖️ Got it: switch to TRUE and prove it in Lean',
-        },
-        budgetAtm: {
-          title: '🚨 Live Wallet Exploit Simulator',
-          subtitle:
-            'Act as a QA auditor: see how one flipped sign turns a wallet withdrawal into a money printer!',
-          labelBalance: 'Balance',
-          labelAmount: 'Withdraw amount',
-          presetNormal: 'Simulate: balance 100, withdraw 30',
-          presetOverdraft: 'Simulate: balance 30, withdraw 100',
-          statusFreeMoney: (balance, amount, buggyBalance, roundTrip) =>
-            `🚨 Free-money bug triggered! Withdrawing ${amount} from ${balance} yields ${buggyBalance}; withdraw + amount = ${roundTrip} ≠ ${balance}!`,
-          statusOverdraft: (balance, amount, roundTrip) =>
-            `🚨 Overdraft breach! Withdrawing ${amount} > ${balance} leaves balance intact, breaking conservation (${roundTrip} ≠ ${balance})!`,
-          statusOk: 'Amount is 0 right now—enter a non-zero withdrawal to expose the bug!',
-          fixInEditorButton: '🔧 Fix & Prove in Lean Editor Below (~102 MB first run)',
-        },
-        clampSim: {
-          title: '🚨 Interval Clamp Failure Reproducer',
-          subtitle:
-            'Test lo, hi and x to watch swapped branches and inverted bounds break the interval contract.',
-          labelLo: 'Lower bound lo',
-          labelHi: 'Upper bound hi',
-          labelX: 'Input x',
-          presetLow: 'Out of bounds: x=5 in [10, 20]',
-          presetInverted: 'Inverted bounds: lo=20, hi=10',
-          statusInverted: (lo, hi, out) =>
-            `🚨 Inverted bounds! lo (${lo}) > hi (${hi}) makes [lo, hi] empty, so output ${out} cannot satisfy both bounds!`,
-          statusSwapped: (lo, hi, x, out) =>
-            `🚨 Swapped branch! For x = ${x}, the buggy clamp returned ${out} instead of pinning to the right side of [${lo}, ${hi}]!`,
-          statusOk: (lo, hi, out) =>
-            `✅ x lies inside [${lo}, ${hi}] (output = ${out}). Move x outside the bounds to trigger the bug!`,
-          fixInEditorButton: '🔧 Fix & Prove in Lean Editor Below (~102 MB first run)',
-        },
-        collatzLab: {
-          title: '👑 3n + 1 Hailstone Trajectory Lab',
-          subtitle:
-            'Pick any positive integer (try 27!) to plot its trajectory instantly, then claim Bronze & Silver in Lean below.',
-          labelN: 'Starting positive integer n',
-          runButton: '▶ Plot trajectory',
-          stats: (steps, peak, reached) =>
-            `${steps} steps · peak ${peak} · ${reached ? 'reached 1 ✓' : 'did not reach 1 within 200 steps…'}`,
-          tierBoardTitle: 'Bounty Tier Board',
-          tierUnlocked: 'Claimed ✓',
-          tierLocked: 'Locked',
-          tierLegendOpen: 'Open Problem 👑',
-        },
-        goldbachLab: {
-          title: '👑 Goldbach Prime-Pair Splitter Lab',
-          subtitle:
-            'Enter any even integer ≥ 4 to find prime decompositions right away, then claim Bronze & Silver in Lean below.',
-          labelN: 'Even integer n (≥ 4)',
-          splitButton: '⚡ Find prime pairs',
-          resultMatch: (n, p, q, count) =>
-            `✅ ${n} = ${p} + ${q} (${count} prime pair${count === 1 ? '' : 's'} found up to 10,000!)`,
-          resultNeedEven: '⚠️ Goldbach applies to even numbers ≥ 4—enter an even integer!',
-          tierBoardTitle: 'Bounty Tier Board',
-          tierUnlocked: 'Claimed ✓',
-          tierLocked: 'Locked',
-          tierLegendOpen: 'Open Problem 👑',
-        },
-        classicArena: {
-          hpLabel: 'Remaining Goal HP',
-          hpClear: '0 goals left · Q.E.D.!',
-          hpRemaining: (count) => `${count} goal${count === 1 ? '' : 's'} remaining`,
-        },
       },
       verdictTitle: 'Pick a stance first',
       verdictHint:
