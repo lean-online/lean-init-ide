@@ -45,3 +45,11 @@
 - **文档改动同步触发 `verify:docs`**：修改架构、工作流、脚本、版本、课时数或 ADR 时，同步对应唯一的权威文档。
 - **公开协作入口**：路线图与题库征集见 [Discussions](https://github.com/lean-online/lean-init-ide/discussions)（`#74` / `#75`），跨仓排期与缺陷追踪统一建在 [Issues](https://github.com/lean-online/lean-init-ide/issues)（如 `#76` / `#77`，因 `lean4-wasm` 禁用 Issues），代码合入走 [Pull Requests](https://github.com/lean-online/lean-init-ide/pulls)。
 - **面向人类的完整流程**（本地开发、门禁档位、分支与提交规范、Issue/PR 模板约定）写在 [CONTRIBUTING.md](CONTRIBUTING.md)；本文件只保留 Agent 必须遵守的硬约束。
+
+## 5. Trae Agent 必看（仅限 Trae 执行环境）
+
+以下是 Trae Agent 沙箱的凭据限制，**不代表人类贡献者或其他 Agent**：
+
+- **只推分支、不代开 PR**：本环境 GitHub 凭据只有 push 权限，`gh pr create` 与 REST 创建 PR 都会返回 `403 Resource not accessible by integration`；不要换账号或反复重试。
+- **交付方式**：推送 `trae/*` 分支后，把对比链接 `https://github.com/lean-online/lean-init-ide/compare/main...<fork-owner>:<branch>?expand=1` 连同建议标题与描述交给用户，由用户点击 “Create pull request”。
+- **其他协作规则**（分支、提交、门禁、双语、文档）仍以上文第 4 节为准，不因本环境例外而放宽。
