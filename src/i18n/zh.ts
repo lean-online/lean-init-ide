@@ -46,6 +46,7 @@ export const zh: Messages = {
     ctaPrimary: '从第一课开始',
     continueCta: '继续学习',
     ctaSecondary: '直接打开编辑器',
+    ctaArcade: '🎮 趣味数学闯关',
     featuresTitle: '底层架构拆解',
     features: [
       {
@@ -103,12 +104,36 @@ export const zh: Messages = {
   challenges: {
     eyebrow: '趣味数学挑战',
     title: '用 Lean 亲手通关证明游乐场',
-    lead: '四大主题区：自由竞技场、真假审判庭、契约漏洞猎人与人类未解猜想厅。每道题都从一句人话开始，代码里的「--」注释会一步步带你看懂；不需要编程基础。',
+    lead: '四大主题区：真假审判庭、契约漏洞猎人、人类未解猜想厅与自由竞技场。每关先玩 0 MB 互动舞台，再用浏览器里的真 Lean 4 内核一锤定音。',
     cardCta: '开始挑战',
+    cardLabTag: '🎮 含 0 MB 互动实验台',
+    featured: {
+      title: '30 秒高光必玩（0 MB 先体验再启动真内核）',
+      subtitle: '不懂代码也能玩：当数学法官、抓钱包漏洞、把玩百年未解猜想',
+      zeroMbTag: '0 MB 秒玩',
+      items: [
+        {
+          slug: 'nat-sub-trap',
+          tag: '⚖️ 数学法官',
+          hook: '(a - b) + b = a 一定对吗？拖两组数让编译器当场判它有罪！',
+        },
+        {
+          slug: 'budget-withdraw',
+          tag: '🚨 钱包漏洞',
+          hook: '取 30 元余额反涨到 130 元！亲自复现印钞 Bug 并用数学证死修复',
+        },
+        {
+          slug: 'collatz-bounty',
+          tag: '👑 百年悬赏',
+          hook: '输入 27 看 111 步冰雹轨迹，再挑战 3n+1 铜牌 / 银牌证明',
+        },
+      ],
+    },
     summary: {
       solved: (done, total) => `已通关 ${done} / ${total} 关`,
       badges: (automation, handcrafted, termMode) =>
         `流派勋章：⚡ ${automation} · 🛠️ ${handcrafted} · λ ${termMode}`,
+      progressPct: (pct) => `探索度 ${pct}%`,
     },
     modes: {
       classic: '⚡ 自由竞技场',
@@ -163,10 +188,135 @@ export const zh: Messages = {
       back: '← 返回挑战列表',
       goalsRemaining: (count) => `当前还剩 ${count} 个待证目标`,
       goalsNone: '当前没有待证目标：把光标放进证明里，Goal 面板会实时更新',
-      tacticsTitle: '出招卡：点一下就能切换流派载入证明',
+      tacticsTitle: '出招卡：参考解法与流派切换',
       tacticsHint:
-        '点任意一张出招卡，会把对应流派的完整可编译证明载入编辑器；也可以直接在下方亲手改代码，实时看 Lean 反馈。',
+        '建议先自己试着推两步；想换写法或刷齐三枚流派勋章时，点击下方出招卡载入对应风格证明。',
+      tacticsDisclosure: '🃏 卡住了或想刷流派勋章？展开参考出招卡（含完整证明）',
       verdictTacticsDisclosure: '卡住了？展开推荐出招卡（会揭晓真假方向）',
+      runtimeNotice:
+        '互动舞台 0 MB 秒玩；下方 Lean 4.36 真内核首次启动需下载约 102 MB（仅存本地缓存，后续免重下），不会在后台偷偷拉取。',
+      sfxOn: '🔊 音效开',
+      sfxOff: '🔇 静音',
+      timerLabel: (formatted) => `⏱️ ${formatted}`,
+      rankLabel: (rank) => `评级 ${rank}`,
+      stampLabels: {
+        classic: 'Q.E.D. 形式化认证',
+        verdict: 'GUILTY · 命题已裁决',
+        bugfix: 'PATCHED · 漏洞已封堵',
+        bounty: 'BOUNTY · 悬赏已点亮',
+      },
+      poster: {
+        nicknameLabel: '战报署名（可选）',
+        nicknamePlaceholder: '输入昵称印在战报上…',
+        generateButton: '🖼️ 生成通关战报海报',
+        downloadButton: '⬇️ 保存 PNG 海报',
+        previewAlt: 'Lean 通关战报海报预览',
+        unavailable: '当前浏览器不支持 Canvas 绘图，请改用复制战绩文本',
+        generated: '海报已生成，可右键或点保存发朋友圈/抖音',
+      },
+      stage: {
+        badgeZeroMb: '0 MB 即时互动舞台',
+        natSub: {
+          title: '⚖️ 数学法庭 · 反例证物台',
+          subtitle: '别急着信直觉——拨动两个自然数，看看 (a - b) + b 在计算机数学里什么时候会翻车！',
+          labelA: '自然数 a',
+          labelB: '自然数 b',
+          swapButton: '⇄ 交换 a / b',
+          presetTrap: '试试 a=5, b=3',
+          presetSafe: '试试 a=10, b=4',
+          statusSafe: (lhs, rhs) => `✅ 这组数没翻车：左边 = ${lhs}，右边 = ${rhs}（还不是反例）`,
+          statusBroken: (a, b, lhs) =>
+            `🔥 抓到反例！因为 ${b} > ${a}，自然数 ${a} - ${b} 被截断成 0，所以 (${a} - ${b}) + ${b} = ${lhs} ≠ ${a}！`,
+          submitButton: '⚖️ 呈交反例给 Lean 真内核终审（首次约 102 MB）',
+        },
+        evenSum: {
+          title: '⚖️ 数学法庭 · 奇偶拆弹台',
+          subtitle:
+            '4 + 6 = 10 让人觉得加数必为偶数——动手试着拼出一个「和是偶数，但加数不全是偶数」的组合！',
+          labelA: '加数 a',
+          labelB: '加数 b',
+          bumpBothButton: '🎲 a+1, b+1',
+          presetEven: '试试 2 + 2',
+          presetMixed: '试试 4 + 6',
+          statusSafe: (sum) => `🔎 当前和 = ${sum}，还不足以推翻原命题，继续调整 a / b`,
+          statusBroken: (a, b, sum) => `🔥 抓到反例！${a} + ${b} = ${sum} 是偶数，但里面藏了奇数！`,
+          submitButton: '⚖️ 呈交反例给 Lean 真内核终审（首次约 102 MB）',
+        },
+        doubleNeg: {
+          title: '⚖️ 真值门实验台 · P 与 ¬¬P',
+          subtitle: '切换命题 P 的真假，观察逻辑世界里「不成立的不成立」是否彻底等价。',
+          toggleButton: '⚡ 反转命题 P 的真假',
+          stateTrue: '成立 (True)',
+          stateFalse: '不成立 (False)',
+          stepP: '原始命题 P',
+          stepNotP: '一次否定 ¬P',
+          stepNotNotP: '双重否定 ¬¬P',
+          insight: '只要 P 成立，¬P 就一定撞墙，所以 ¬¬P（从 ¬P 推出矛盾）永远成立。找不到反例！',
+          switchToTrueButton: '⚖️ 我懂了：切到「判真」并在 Lean 中证明它',
+        },
+        budgetAtm: {
+          title: '🚨 线上钱包事故现场模拟器',
+          subtitle: '试试当一次测试工程师：看看这个写错一行加号的扣款函数有多离谱！',
+          labelBalance: '账户余额 (balance)',
+          labelAmount: '扣款金额 (amount)',
+          presetNormal: '模拟：余额 100 扣 30',
+          presetOverdraft: '模拟：余额 30 扣 100（透支）',
+          statusFreeMoney: (balance, amount, buggyBalance, roundTrip) =>
+            `🚨 印钞漏洞触发！余额 ${balance} 扣款 ${amount} 后，错代码把钱加成了 ${buggyBalance}；扣款+退回=${roundTrip} ≠ ${balance}（越花钱越多）！`,
+          statusOverdraft: (balance, amount, roundTrip) =>
+            `🚨 透支截断违约！扣款 ${amount} > 余额 ${balance} 时保留原余额，导致 withdraw + amount = ${roundTrip} ≠ ${balance}！`,
+          statusOk: '当前输入恰好等于 0，试着输入一笔非零扣款触发故障！',
+          fixInEditorButton: '🔧 去下方 Lean 代码手术台修复并证死（首次约 102 MB）',
+        },
+        clampSim: {
+          title: '🚨 区间裁剪故障复现器',
+          subtitle: '输入下界 lo、上界 hi 和数值 x，亲眼看看写反分支和倒置边界会返回什么鬼数字。',
+          labelLo: '下界 lo',
+          labelHi: '上界 hi',
+          labelX: '输入值 x',
+          presetLow: '测试越界：x=5 进 [10, 20]',
+          presetInverted: '测试倒置：lo=20, hi=10',
+          statusInverted: (lo, hi, out) =>
+            `🚨 边界倒置！lo (${lo}) > hi (${hi})，区间根本为空，返回值 ${out} 无论如何都无法同时满足 [lo, hi]！`,
+          statusSwapped: (lo, hi, x, out) =>
+            `🚨 分支写反！x = ${x} 落界外时本该修正，但错代码返回了 ${out}（区间 [${lo}, ${hi}] 门神站反了）！`,
+          statusOk: (lo, hi, out) =>
+            `✅ x 恰好在 [${lo}, ${hi}] 内，buggy 输出 = ${out}。试着把 x 拖出边界！`,
+          fixInEditorButton: '🔧 去下方 Lean 代码手术台修复并证死（首次约 102 MB）',
+        },
+        collatzLab: {
+          title: '👑 3n + 1 冰雹轨迹实验室',
+          subtitle:
+            '输入任意正整数（推荐 27！），即时绘制跳动序列；再去下方 Lean 拿下铜牌和银牌证明。',
+          labelN: '起点正整数 n',
+          runButton: '▶ 计算轨迹',
+          stats: (steps, peak, reached) =>
+            `共 ${steps} 步 · 最高冲上 ${peak} · ${reached ? '已降落到 1 ✓' : '200 步内尚未归 1…'}`,
+          tierBoardTitle: '三阶悬赏通缉榜',
+          tierUnlocked: '已点亮 ✓',
+          tierLocked: '待解锁',
+          tierLegendOpen: '全人类未解 👑',
+        },
+        goldbachLab: {
+          title: '👑 哥德巴赫素数拆解实验室',
+          subtitle:
+            '输入任意 ≥ 4 的偶数，秒算它能拆成多少对素数之和；再去下方拿下 Lean 铜/银牌证明！',
+          labelN: '偶数 n (≥ 4)',
+          splitButton: '⚡ 拆分素数对',
+          resultMatch: (n, p, q, count) =>
+            `✅ ${n} = ${p} + ${q}（10000 以内共找到 ${count} 组素数拆分！）`,
+          resultNeedEven: '⚠️ 哥德巴赫猜想针对「不小于 4 的偶数」，请输入偶数试试！',
+          tierBoardTitle: '三阶悬赏通缉榜',
+          tierUnlocked: '已点亮 ✓',
+          tierLocked: '待解锁',
+          tierLegendOpen: '全人类未解 👑',
+        },
+        classicArena: {
+          hpLabel: '待证目标血条 (Goal HP)',
+          hpClear: '0 个剩余目标 · Q.E.D.!',
+          hpRemaining: (count) => `剩余 ${count} 个目标`,
+        },
+      },
       verdictTitle: '先选立场，再动手',
       verdictHint: '题干不会告诉你真假。选一个立场载入对应模板；选错了也能随时切回来。',
       verdictTrue: '⚖️ 我判它为真：尝试证明定理',

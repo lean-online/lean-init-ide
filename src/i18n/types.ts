@@ -87,6 +87,8 @@ export type Messages = {
     /** 已有进度时的主按钮文案。 */
     continueCta: string;
     ctaSecondary: string;
+    /** 首屏并列的趣味数学闯关入口。 */
+    ctaArcade: string;
     featuresTitle: string;
     features: Array<{ title: string; body: string }>;
     limitsTitle: string;
@@ -116,10 +118,19 @@ export type Messages = {
     title: string;
     lead: string;
     cardCta: string;
+    cardLabTag: string;
+    /** 列表页顶部 30 秒高光推荐区。 */
+    featured: {
+      title: string;
+      subtitle: string;
+      zeroMbTag: string;
+      items: Array<{ slug: string; tag: string; hook: string }>;
+    };
     /** 列表页顶部的通关与流派勋章统计。 */
     summary: {
       solved: (done: number, total: number) => string;
       badges: (automation: number, handcrafted: number, termMode: number) => string;
+      progressPct: (pct: number) => string;
     };
     /** 四大主题区的模式标签。 */
     modes: {
@@ -168,7 +179,125 @@ export type Messages = {
       goalsNone: string;
       tacticsTitle: string;
       tacticsHint: string;
+      tacticsDisclosure: string;
       verdictTacticsDisclosure: string;
+      runtimeNotice: string;
+      sfxOn: string;
+      sfxOff: string;
+      timerLabel: (formatted: string) => string;
+      rankLabel: (rank: 'S' | 'A' | 'B') => string;
+      stampLabels: {
+        classic: string;
+        verdict: string;
+        bugfix: string;
+        bounty: string;
+      };
+      poster: {
+        nicknameLabel: string;
+        nicknamePlaceholder: string;
+        generateButton: string;
+        downloadButton: string;
+        previewAlt: string;
+        unavailable: string;
+        generated: string;
+      };
+      stage: {
+        badgeZeroMb: string;
+        natSub: {
+          title: string;
+          subtitle: string;
+          labelA: string;
+          labelB: string;
+          swapButton: string;
+          presetTrap: string;
+          presetSafe: string;
+          statusSafe: (lhs: number, rhs: number) => string;
+          statusBroken: (a: number, b: number, lhs: number) => string;
+          submitButton: string;
+        };
+        evenSum: {
+          title: string;
+          subtitle: string;
+          labelA: string;
+          labelB: string;
+          bumpBothButton: string;
+          presetEven: string;
+          presetMixed: string;
+          statusSafe: (sum: number) => string;
+          statusBroken: (a: number, b: number, sum: number) => string;
+          submitButton: string;
+        };
+        doubleNeg: {
+          title: string;
+          subtitle: string;
+          toggleButton: string;
+          stateTrue: string;
+          stateFalse: string;
+          stepP: string;
+          stepNotP: string;
+          stepNotNotP: string;
+          insight: string;
+          switchToTrueButton: string;
+        };
+        budgetAtm: {
+          title: string;
+          subtitle: string;
+          labelBalance: string;
+          labelAmount: string;
+          presetNormal: string;
+          presetOverdraft: string;
+          statusFreeMoney: (
+            balance: number,
+            amount: number,
+            buggyBalance: number,
+            roundTrip: number,
+          ) => string;
+          statusOverdraft: (balance: number, amount: number, roundTrip: number) => string;
+          statusOk: string;
+          fixInEditorButton: string;
+        };
+        clampSim: {
+          title: string;
+          subtitle: string;
+          labelLo: string;
+          labelHi: string;
+          labelX: string;
+          presetLow: string;
+          presetInverted: string;
+          statusInverted: (lo: number, hi: number, out: number) => string;
+          statusSwapped: (lo: number, hi: number, x: number, out: number) => string;
+          statusOk: (lo: number, hi: number, out: number) => string;
+          fixInEditorButton: string;
+        };
+        collatzLab: {
+          title: string;
+          subtitle: string;
+          labelN: string;
+          runButton: string;
+          stats: (steps: number, peak: number, reached: boolean) => string;
+          tierBoardTitle: string;
+          tierUnlocked: string;
+          tierLocked: string;
+          tierLegendOpen: string;
+        };
+        goldbachLab: {
+          title: string;
+          subtitle: string;
+          labelN: string;
+          splitButton: string;
+          resultMatch: (n: number, p: number, q: number, count: number) => string;
+          resultNeedEven: string;
+          tierBoardTitle: string;
+          tierUnlocked: string;
+          tierLocked: string;
+          tierLegendOpen: string;
+        };
+        classicArena: {
+          hpLabel: string;
+          hpClear: string;
+          hpRemaining: (count: number) => string;
+        };
+      };
       /** 真假审判庭：先选立场的开关。 */
       verdictTitle: string;
       verdictHint: string;

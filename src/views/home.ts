@@ -134,6 +134,7 @@ export const renderHome = (
       </p>
       <div class="flex flex-wrap gap-3">
         <a class="${buttonClass}" data-home-cta="primary" href="/${locale}/learn/${target}">${cta}</a>
+        <a class="${ghostButtonLgClass} border-warn/45 bg-warn/10 text-fg hover:border-warn" data-home-cta="hero-challenges" href="/${locale}/challenges">${escapeHtml(t.ctaArcade)}</a>
         <a class="${ghostButtonLgClass}" href="/${locale}/playground">${t.ctaSecondary}</a>
       </div>
     </section>

@@ -8,9 +8,11 @@ describe('首页渲染', () => {
     expect(renderHome('en')).toContain('href="/en/learn/what-is-lean"');
   });
 
-  it('次要行动按钮指向 playground', () => {
+  it('次要行动按钮指向 playground，并列呈现趣味数学闯关入口', () => {
     expect(renderHome('zh')).toContain('href="/zh/playground"');
     expect(renderHome('en')).toContain('href="/en/playground"');
+    expect(renderHome('zh')).toContain('data-home-cta="hero-challenges" href="/zh/challenges"');
+    expect(renderHome('en')).toContain('data-home-cta="hero-challenges" href="/en/challenges"');
   });
 
   it('有完成进度时继续学习指向第一节未完成课', () => {
