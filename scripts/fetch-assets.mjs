@@ -21,13 +21,18 @@ import { assetSources } from '../src/asset-sources.mjs';
  */
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = path.join(root, 'public', 'wasm-lean4');
-const manifest = JSON.parse(readFileSync(path.join(root, 'config', 'lean4-runtime.json'), 'utf8'));
-const assetOrigin = process.env.LEAN_ASSET_ORIGIN?.trim();
-const primaryOverride =
+const loadManifest = (relativePath) =>
+  JSON.parse(readFileSync(path.join(root, relativePath), 'utf8'));
+
+const resolvePrimaryOverride = (manifestObj) =>
   process.env.LEAN_ASSET_BASE_URL?.trim() ||
-  (assetOrigin && manifest.primary.baseUrl.startsWith('/')
-    ? new URL(manifest.primary.baseUrl, assetOrigin).href
+  (assetOrigin && manifestObj.primary.baseUrl.startsWith('/')
+    ? new URL(manifestObj.primary.baseUrl, assetOrigin).href
     : undefined);
+
+const manifest = loadManifest('config/lean4-runtime.json');
+const assetOrigin = process.env.LEAN_ASSET_ORIGIN?.trim();
+const primaryOverride = resolvePrimaryOverride(manifest);
 
 const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
 
@@ -79,11 +84,11 @@ const verify = (asset, data) => {
  * zstd 资产的原始字节仍在上游 GitHub Release（gzip）。下载后按清单校验上游 gzip，
  * 再解压、以 level 19 重新压缩，最后用交付哈希复核。这样 CI 不需要预上传 R2。
  */
-const fetchUpstream = async (asset) => {
+const fetchUpstream = async (asset, activeManifest) => {
   if (!asset.upstream || !asset.upstreamBytes || !asset.upstreamSha256) {
     throw new Error(`${asset.name} 缺少 upstream 字段，无法生成 zstd 资产`);
   }
-  const url = new URL(asset.upstream, manifest.fallback.baseUrl).href;
+  const url = new URL(asset.upstream, activeManifest.fallback.baseUrl).href;
   const response = await fetchWithRetry(url, {
     headers: { 'Accept-Encoding': 'identity' },
     redirect: 'follow',
@@ -108,10 +113,10 @@ const toZstd = (asset, upstream) => {
   return data;
 };
 
-const fetchFromSources = async (asset) => {
+const fetchFromSources = async (asset, activeManifest, activePrimaryOverride) => {
   let lastError;
   // 构建期把魔搭镜像也纳入回退：GitHub Release 偶发抖动时仍能完成下载。
-  const candidates = assetSources(manifest, asset, primaryOverride, {
+  const candidates = assetSources(activeManifest, asset, activePrimaryOverride, {
     includeMirror: true,
   }).filter((source) => /^https?:\/\//i.test(source.url));
   if (candidates.length === 0) {
@@ -139,26 +144,26 @@ const fetchFromSources = async (asset) => {
  * 构建期在 Node 下额外尝试拉取 GitHub Release 中已预压好的同名 zstd 分片，
  * 避免直接回退 130MB gzip 现场重压缩；失败时记录告警并返回 null。
  */
-const fetchPrecompressedFallback = async (asset) => {
-  if (!manifest.fallback?.baseUrl || !asset.name) return null;
+const fetchPrecompressedFallback = async (asset, activeManifest) => {
+  if (!activeManifest.fallback?.baseUrl || !asset.name) return null;
   try {
-    const url = new URL(asset.name, manifest.fallback.baseUrl).href;
+    const url = new URL(asset.name, activeManifest.fallback.baseUrl).href;
     const response = await fetchWithRetry(url, {
       headers: { 'Accept-Encoding': 'identity' },
       redirect: 'follow',
     });
     if (!response.ok) {
       console.warn(
-        `warn   ${asset.name} <- ${manifest.fallback.label} (precompressed): HTTP ${response.status}`,
+        `warn   ${asset.name} <- ${activeManifest.fallback.label} (precompressed): HTTP ${response.status}`,
       );
       return null;
     }
     const data = Buffer.from(await response.arrayBuffer());
     verify(asset, data);
-    return { data, label: manifest.fallback.label };
+    return { data, label: activeManifest.fallback.label };
   } catch (error) {
     console.warn(
-      `warn   ${asset.name} <- ${manifest.fallback.label} (precompressed): ${error.message ?? error}`,
+      `warn   ${asset.name} <- ${activeManifest.fallback.label} (precompressed): ${error.message ?? error}`,
     );
     return null;
   }
@@ -178,52 +183,72 @@ const extensionAssets =
   process.env.LEAN_FETCH_EXTENSIONS === '1'
     ? (manifest.extensions ?? []).flatMap((extension) => extension.assets)
     : [];
-const assetsToPrepare = [...manifest.assets, ...extensionAssets];
+const wasm64Manifest =
+  process.env.LEAN_FETCH_WASM64 === '1' ? loadManifest('config/lean4-wasm64-runtime.json') : null;
+const prepareGroups = [
+  {
+    manifest,
+    primaryOverride,
+    assets: [...manifest.assets, ...extensionAssets],
+  },
+  ...(wasm64Manifest
+    ? [
+        {
+          manifest: wasm64Manifest,
+          primaryOverride: resolvePrimaryOverride(wasm64Manifest),
+          assets: wasm64Manifest.assets,
+        },
+      ]
+    : []),
+];
+const totalAssets = prepareGroups.reduce((sum, group) => sum + group.assets.length, 0);
 
-for (const asset of assetsToPrepare) {
-  const target = path.join(outDir, asset.name);
-  if (isValid(target, asset)) {
-    reused += 1;
-    console.log(`reuse  ${asset.name}`);
-    continue;
-  }
-
-  let data;
-  let label = 'local';
-  if (asset.local && existsSync(path.join(root, asset.local))) {
-    data = readFileSync(path.join(root, asset.local));
-    verify(asset, data);
-  } else if (asset.encoding === 'zstd') {
-    // 优先尝试镜像/主源直接拉取已压缩分片，或者同时把 GitHub Release 的预压缩同名文件作为 Node 构建期直连源，
-    // 只有直接拉取未命中时，才回退到上游 gzip 现场转压。
-    try {
-      ({ data, label } = await fetchFromSources(asset));
-    } catch (directError) {
-      const precompressed = await fetchPrecompressedFallback(asset);
-      if (precompressed) {
-        ({ data, label } = precompressed);
-      } else {
-        if (!asset.upstream || !asset.upstreamBytes || !asset.upstreamSha256) {
-          throw directError;
-        }
-        console.warn(
-          `warn   ${asset.name} 预压缩直连未命中（${directError.message ?? directError}），回退上游 gzip 转压`,
-        );
-        data = toZstd(asset, await fetchUpstream(asset));
-        label = 'upstream gzip -> zstd';
-      }
+for (const group of prepareGroups) {
+  for (const asset of group.assets) {
+    const target = path.join(outDir, asset.name);
+    if (isValid(target, asset)) {
+      reused += 1;
+      console.log(`reuse  ${asset.name}`);
+      continue;
     }
-  } else {
-    ({ data, label } = await fetchFromSources(asset));
-  }
 
-  writeFileSync(target, data);
-  downloaded += 1;
-  console.log(`ok     ${asset.name} <- ${label}`);
+    let data;
+    let label = 'local';
+    if (asset.local && existsSync(path.join(root, asset.local))) {
+      data = readFileSync(path.join(root, asset.local));
+      verify(asset, data);
+    } else if (asset.encoding === 'zstd') {
+      // 优先尝试镜像/主源直接拉取已压缩分片，或者同时把 GitHub Release 的预压缩同名文件作为 Node 构建期直连源，
+      // 只有直接拉取未命中时，才回退到上游 gzip 现场转压。
+      try {
+        ({ data, label } = await fetchFromSources(asset, group.manifest, group.primaryOverride));
+      } catch (directError) {
+        const precompressed = await fetchPrecompressedFallback(asset, group.manifest);
+        if (precompressed) {
+          ({ data, label } = precompressed);
+        } else {
+          if (!asset.upstream || !asset.upstreamBytes || !asset.upstreamSha256) {
+            throw directError;
+          }
+          console.warn(
+            `warn   ${asset.name} 预压缩直连未命中（${directError.message ?? directError}），回退上游 gzip 转压`,
+          );
+          data = toZstd(asset, await fetchUpstream(asset, group.manifest));
+          label = 'upstream gzip -> zstd';
+        }
+      }
+    } else {
+      ({ data, label } = await fetchFromSources(asset, group.manifest, group.primaryOverride));
+    }
+
+    writeFileSync(target, data);
+    downloaded += 1;
+    console.log(`ok     ${asset.name} <- ${label}`);
+  }
 }
 
 const primary = primaryOverride ?? manifest.primary.baseUrl;
 console.log(
-  `\nLean Init runtime ready: ${downloaded} downloaded, ${reused} reused, ${assetsToPrepare.length} total.` +
+  `\nLean Init runtime ready: ${downloaded} downloaded, ${reused} reused, ${totalAssets} total.` +
     `\nprimary: ${manifest.primary.label} (${primary}); fallback: ${manifest.fallback.label}`,
 );

@@ -482,4 +482,111 @@ describe('wasm64-process-worker 消息与运行生命周期', () => {
     ).rejects.toThrow(/非法/);
     expect(readerClosed).toHaveBeenCalledTimes(1);
   });
+
+  it('PROXY_TO_PTHREAD 触发伪 exit(0) 时保留 OPFS 同步读句柄，真实非零退出才关闭句柄', async () => {
+    const opfsBytes = new Uint8Array([42, 43, 44]);
+    let closed = false;
+    const readerClosed = vi.fn(() => {
+      closed = true;
+    });
+    vi.stubGlobal('navigator', {
+      storage: {
+        getDirectory: vi.fn(async () => ({
+          getDirectoryHandle: vi.fn(async () => ({
+            getDirectoryHandle: vi.fn(async () => ({
+              getFileHandle: vi.fn(async () => ({
+                createSyncAccessHandle: vi.fn(async () => ({
+                  read: (buf: Uint8Array, opts?: { at?: number }) => {
+                    if (closed) {
+                      const err = new Error('The access handle was already closed');
+                      err.name = 'InvalidStateError';
+                      throw err;
+                    }
+                    const at = opts?.at ?? 0;
+                    const n = Math.min(buf.byteLength, Math.max(0, opfsBytes.byteLength - at));
+                    if (n > 0) buf.set(opfsBytes.subarray(at, at + n), 0);
+                    return n;
+                  },
+                  close: readerClosed,
+                })),
+              })),
+            })),
+          })),
+        })),
+      },
+    });
+    vi.spyOn(WebAssembly, 'instantiate').mockResolvedValue({
+      exports: {},
+    } as unknown as WebAssembly.Instance);
+
+    const glueSource = `
+      export default async function createLean(opts) {
+        const nodes = new Map();
+        globalThis.__triggerRealExit = (code) => opts.lspProcessExit(code);
+        globalThis.__readLazyOlean = () => {
+          const node = nodes.get('/lean/lib/lean/Init/Opfs.olean');
+          const out = new Uint8Array(3);
+          const n = node.stream_ops.read({ node }, out, 0, 3, 0);
+          return { n, bytes: [...out] };
+        };
+        await opts.instantiateWasm({}, () => {});
+        return {
+          wasmMemory: { buffer: new ArrayBuffer(4096) },
+          FS: {
+            mkdirTree: () => {},
+            writeFile: (p, data) => {
+              nodes.set(p, {
+                usedBytes: data.byteLength,
+                contents: data,
+                stream_ops: { read: () => 0, mmap: () => ({ ptr: 0, allocated: true }) },
+              });
+            },
+            lookupPath: (p) => ({ node: nodes.get(p) }),
+            chdir: () => {},
+            getStream: () => ({ stream_ops: {} }),
+          },
+          callMain: () => {
+            opts.lspProcessExit(0);
+            return 0;
+          },
+        };
+      }
+    `;
+    const index = {
+      chunks: [{ path: 'c0.zst', offset: 0, uncompressedBytes: 3 }],
+      files: [{ path: 'Init/Opfs.olean', offset: 0, bytes: 3 }],
+    };
+
+    const { posted, fakeSelf, glueUrl } = await loadWorkerWithGlue(glueSource);
+    fakeSelf.onmessage?.({
+      data: {
+        type: 'start',
+        glueUrl,
+        wasmModule: {} as WebAssembly.Module,
+        library: { 'lean-init-64.index.json': encodeIndex(index) },
+        opfsPacks: {
+          c0: { __opfsPack: true, dir: 'wasm64-test', fileName: 'c0.bin', bytes: 3 },
+        },
+        stdin: { buffer: new SharedArrayBuffer(64), capacity: 32 },
+        args: ['-j2', '--worker', 'file:///workspace/Main.lean'],
+      },
+    } as MessageEvent);
+
+    await vi.waitFor(() => expect(posted).toContainEqual({ exit: 0 }));
+    expect(readerClosed).not.toHaveBeenCalled();
+
+    const readLazyOlean = (globalThis as Record<string, unknown>).__readLazyOlean as () => {
+      n: number;
+      bytes: number[];
+    };
+    expect(readLazyOlean()).toEqual({ n: 3, bytes: [42, 43, 44] });
+
+    const triggerRealExit = (globalThis as Record<string, unknown>).__triggerRealExit as (
+      code: number,
+    ) => void;
+    triggerRealExit(2);
+    expect(readerClosed).toHaveBeenCalledTimes(1);
+    expect(posted).toContainEqual({ exit: 2 });
+    expect(() => readLazyOlean()).toThrow(/already closed/);
+  });
 });
