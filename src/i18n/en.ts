@@ -35,9 +35,9 @@ export const en: Messages = {
     clearCacheFailed: 'Could not clear the cache. Try again.',
   },
   home: {
-    eyebrow: 'Lean 4.36.0 · Init + Std + Batteries · LSP in the browser',
-    title: 'Run a real Lean 4 theorem prover in your browser',
-    lead: 'Not a regex mock, and not code shipped to a server: the full compiler and language server live in a Web Worker. Open the page and write your first proof in 30 seconds.',
+    eyebrow: 'Zero install · Interactive math proofs in the browser',
+    title: 'Write your first zero-gap mathematical proof right in the browser',
+    lead: 'Not a regex toy, and not code sent to a cloud server: the full Lean 4 proof checker runs locally in your browser. Try the 5-second demo, climb Proof Tower instantly, or start Lesson 1.',
     seoDescription:
       'Run Lean 4.36.0 in your browser: the real compiler and language server run as WebAssembly in a Web Worker, with Init, Std and Batteries and zero backend.',
     facts: (lessonCount) =>
@@ -45,11 +45,15 @@ export const en: Messages = {
     factsRepo: 'GitHub repository',
     heroNote:
       'Unit tests only cover the cases you remembered to write. Lean uses mathematical logic to rule out every possible input at once, and the compiler stops you with a red line the moment a step breaks.',
-    ctaPrimary: 'Start the first lesson',
-    continueCta: 'Continue learning',
-    ctaSecondary: 'Open the playground',
+    ctaPrimary: 'Start Lesson 1',
+    ctaPrimarySub: '~3 min · structured track',
+    continueCta: (lessonNumber) => `Continue Lesson ${lessonNumber}`,
+    ctaSecondary: 'Open Playground',
+    ctaSecondarySub: 'for Lean veterans',
     ctaArcade: '🎮 Play Proof Arcade',
+    ctaArcadeSub: '0 MB instant · 1-min start',
     featuresTitle: 'Under the hood',
+    featuresLead: 'Lean 4.36.0 · Init + Std + Batteries · LSP in the browser · zero backend',
     features: [
       {
         title: 'A real compiler, not a mock',
@@ -121,11 +125,13 @@ export const en: Messages = {
       activeGoalLabel: 'Active Goal (Target)',
       queuedGoalLabel: 'Queued Shield',
       shieldsLeft: (count) =>
-        count === 0 ? '0 shields left' : `${count} shield${count === 1 ? '' : 's'} left`,
+        count === 0 ? '0 shields left' : `${count} subgoal${count === 1 ? '' : 's'} left`,
+      stepProgress: (remainingSteps) =>
+        `1 goal · ${remainingSteps} step${remainingSteps === 1 ? '' : 's'} left`,
       playedLabel: 'Assembled Lean proof steps:',
       undoButton: '↩ Undo step',
       resetButton: '↺ Reset floor',
-      idleLog: 'Inspect the Active Goal below and play a tactic card to strike!',
+      idleLog: 'Inspect the Active Goal above and play a tactic card to strike!',
       clearedStamp: 'FLOOR CLEARED',
       clearedTitle: (monster) => `⚔️ Defeated ${monster}!`,
       unlockedDrop: (skill) => `✨ Unlocked skill: ${skill}`,
@@ -133,7 +139,14 @@ export const en: Messages = {
       allClearedTitle: '🏆 All 6 Proof Tower floors cleared!',
       allClearedBody:
         'You have mastered rfl, rw, reverse ←, intro, apply, constructor, unfold and omega in real Lean 4!',
+      allClearedBanner: (cleared, total) =>
+        `🏆 All ${cleared}/${total} floors cleared · click any floor above to review or share your card`,
       posterButton: '🖼️ Generate Tower Poster',
+      copyTextButton: '📋 Copy Text Summary',
+      copyTextDone: 'Text summary copied',
+      copyTextFailed: 'Copy failed—please copy manually',
+      shareTextSummary: (cleared, total, tier, elapsed) =>
+        `I cleared ${cleared}/${total} floors in Lean Proof Tower and reached ${tier} in ${elapsed}! Try it with 0 MB wait 👉`,
       toggleCodeButton: '👁️ Show real Lean 4 code',
       verifyButton: '⚡ Verify with real Lean 4.36 (~102 MB first run)',
       verifyNote:
@@ -205,6 +218,23 @@ export const en: Messages = {
     },
     detail: {
       back: '← Back to all challenges',
+      modeEyebrow: (modeLabel) => `Proof Arcade · ${modeLabel}`,
+      onboardingTitle: '30-second guide (auto-hides once dismissed)',
+      onboardingSteps: [
+        {
+          title: '1. Check the prompt & goal',
+          text: 'Focus on what follows “⊢”—that is what Lean asks you to prove.',
+        },
+        {
+          title: '2. Click Start Lean',
+          text: 'Downloads ~102 MB on first run (cached locally afterward).',
+        },
+        {
+          title: '3. Use a play card if stuck',
+          text: 'Expand the reference play cards anytime to try a full proof.',
+        },
+      ],
+      onboardingDismiss: 'Got it, do not show again',
       goalsRemaining: (count) => `${count} goal${count === 1 ? '' : 's'} left to prove`,
       goalsNone:
         'No goals right now: put the cursor inside the proof and the Goal panel updates live',
@@ -214,7 +244,7 @@ export const en: Messages = {
       tacticsDisclosure: '🃏 Stuck or hunting style badges? Reveal reference play cards',
       verdictTacticsDisclosure: 'Stuck? Reveal play cards (contains truth spoiler)',
       runtimeNotice:
-        'The interactive lab runs in 0 MB. Starting the real Lean 4.36 verifier below downloads ~102 MB on first run (cached locally afterward) and never fetches silently.',
+        'This puzzle runs the full Lean 4.36 compiler in your browser (~102 MB first download, cached locally afterward; never fetches in the background).',
       sfxOn: '🔊 SFX On',
       sfxOff: '🔇 Muted',
       timerLabel: (formatted) => `⏱️ ${formatted}`,
@@ -262,6 +292,7 @@ export const en: Messages = {
       solvedBadges: (badges) => `Earned this run: ${badges}`,
       solvedTiers: (tiers) => `Bounty progress: ${tiers}`,
       bestChars: (count) => `Best record: ${count} chars`,
+      newRecordLabel: '🎉 New personal record!',
       copyCard: 'Copy result card',
       copyCardDone: 'Result card copied',
       copyCardFailed: 'Copy failed—please select the text manually',
@@ -296,6 +327,9 @@ export const en: Messages = {
     runInEditor: 'Run',
     goalLabel: 'Goal changes',
     hintLabel: 'Hint',
+    hintStepLabel: (index, total) => `Hint ${index}/${total}`,
+    prereqLabel: 'Prerequisites',
+    prereqReview: '30s cheat sheet',
     runCrashed: 'Run failed: the Lean process may have crashed. Your code is preserved.',
     restartLean: 'Restart Lean',
     restarting: 'Restarting…',
@@ -382,6 +416,7 @@ end
     backToLesson: 'Back to lesson',
     lessonNoticeTitle: 'Lesson exercise',
     lessonNoticeHint: 'Show hint',
+    lessonNoticeHintStep: (index, total) => `Hint ${index}/${total}`,
     challengeNoticeTitle: 'Opened from a math challenge',
     challengeNoticeBody:
       'The puzzle statement is below. If this browser already has an editor draft, it will not be overwritten silently.',
@@ -438,7 +473,7 @@ end
     statusLowMemory: 'Low-memory device · start manually',
     lowMemoryHint:
       'This device reports limited memory. Lean needs about 400 MB free, so the download no longer starts automatically — start it yourself when the device has room.',
-    statusLoading: 'Loading runtime… (about 102 MB on first run)',
+    statusLoading: 'Downloading/loading Lean kernel (~102 MB first run)…',
     statusStarting: 'Starting the LSP…',
     statusChunks: (loaded, total) => `${loaded} / ${total} MB`,
     statusChunkFallback: (name, message) => `Chunk fallback ${name}: ${message}`,

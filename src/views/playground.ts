@@ -2,7 +2,7 @@ import { playgroundStarter, resolveChallengeParam } from '../challenges';
 import { decodeSharedCode } from '../code-share';
 import { renderLeanMarkup, showEditorLoadFailure } from '../components/lean-markup';
 import { currentMemoryTier } from '../device';
-import { draftKeyFor, readDraft } from '../draft';
+import { draftKeyFor, hashStarter, readDraft } from '../draft';
 import { loadLessons, messagesFor, type Locale } from '../i18n';
 import type { LessonPage } from '../i18n/types';
 import { getAutoStart } from '../settings';
@@ -29,15 +29,33 @@ const renderLessonNotice = (locale: Locale, lesson: LessonPage): HTMLElement | n
   notice.dataset.role = 'lesson-notice';
   notice.dataset.lessonSlug = lesson.slug;
   notice.className = 'border-b border-line bg-panel-soft gutter-x py-3';
-  const hint = lesson.exercise.hint
-    ? `<details class="mt-2 max-w-[820px] rounded-lg border border-line bg-panel px-3 py-2">
-         <summary class="flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center text-xs font-[650] text-fg">${escapeHtml(t.lessonNoticeHint)}</summary>
-         <p class="mt-1 mb-0 text-xs leading-relaxed text-muted">${renderInlineCode(lesson.exercise.hint)}</p>
-       </details>`
-    : '';
+  const hintList = lesson.exercise.hints?.length
+    ? lesson.exercise.hints
+    : lesson.exercise.hint
+      ? [lesson.exercise.hint]
+      : [];
+  const hint =
+    hintList.length <= 1
+      ? hintList[0]
+        ? `<details class="mt-2 max-w-[820px] rounded-lg border border-line bg-panel px-3 py-2">
+             <summary class="flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center text-xs font-[650] text-fg">${escapeHtml(t.lessonNoticeHint)}</summary>
+             <p class="mt-1 mb-0 text-xs leading-relaxed text-muted">${renderInlineCode(hintList[0])}</p>
+           </details>`
+        : ''
+      : `<div class="mt-2 flex max-w-[820px] flex-col gap-1.5" data-role="progressive-hints">
+           ${hintList
+             .map(
+               (item, idx) => `
+               <details class="rounded-lg border border-line bg-panel px-3 py-1.5">
+                 <summary class="flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center text-xs font-[650] text-fg">${escapeHtml(t.lessonNoticeHintStep(idx + 1, hintList.length))}</summary>
+                 <p class="mt-1 mb-0 text-xs leading-relaxed text-muted">${renderInlineCode(item)}</p>
+               </details>`,
+             )
+             .join('')}
+         </div>`;
   notice.innerHTML = `
     <p class="m-0 text-xs uppercase tracking-[0.08em] text-accent">${escapeHtml(t.lessonNoticeTitle)} · ${escapeHtml(lesson.navTitle)}</p>
-    <p class="mt-1 mb-0 text-[13px] font-[650]">${escapeHtml(lesson.title)} — ${escapeHtml(lesson.exercise.title)}</p>
+    <p class="mt-1 mb-0 text-[13px] font-[650]">${renderInlineCode(lesson.title)} — ${escapeHtml(lesson.exercise.title)}</p>
     <p class="mt-1 mb-0 max-w-[820px] text-[13px] leading-relaxed text-muted">${renderInlineCode(lesson.exercise.body)}</p>
     ${hint}
   `;
@@ -108,7 +126,9 @@ export const mountPlayground = async (root: HTMLElement, locale: Locale): Promis
     sharedCode ??
     messagesFor(locale).playground.defaultCode;
   const draftKey = draftKeyFor(lesson?.slug);
-  const draft = challenge ? readDraft(draftKey) : null;
+  const draft = challenge
+    ? readDraft(draftKey, challengeStarter ? hashStarter(challengeStarter) : undefined)
+    : null;
   const hasPersonalDraft = Boolean(
     challenge && draft && challengeStarter !== undefined && draft.code !== challengeStarter,
   );

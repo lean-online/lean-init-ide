@@ -144,4 +144,49 @@ describe('证明爬塔天梯视图', () => {
       focus: false,
     });
   });
+
+  it('2F 步数进度与 5F 多子目标语义清晰拆分，支持复制纯文本战报与 pageshow 状态同步', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    document.body.innerHTML = renderProofTower('zh');
+    mountProofTower(document.body, 'zh');
+
+    // 2F 单目标：未破盾前还差 2 步，打完 rw [hx] 后明确减成还差 1 步。
+    document.body.querySelector<HTMLButtonElement>('[data-tower-floor="f2"]')!.click();
+    const shields = document.body.querySelector('[data-role="tower-shields"]')!;
+    expect(shields.textContent).toBe(messagesFor('zh').challenges.tower.stepProgress(2));
+    document.body.querySelector<HTMLButtonElement>('[data-tower-card="rw_hx"]')!.click();
+    expect(shields.textContent).toBe(messagesFor('zh').challenges.tower.stepProgress(1));
+    document.body.querySelector<HTMLButtonElement>('[data-tower-card="rw_hy"]')!.click();
+
+    // 胜利后可一键复制纯文本战报。
+    document.body.querySelector<HTMLButtonElement>('[data-role="tower-copy-text"]')!.click();
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText.mock.calls[0]![0]).toContain('/zh/challenges');
+    expect(document.body.querySelector('[data-role="tower-copy-status"]')?.textContent).toBe(
+      messagesFor('zh').challenges.tower.copyTextDone,
+    );
+
+    // 5F constructor 拆分出 2 个子目标时展示「剩余子目标 2」。
+    document.body.querySelector<HTMLButtonElement>('[data-tower-floor="f5"]')!.click();
+    document.body.querySelector<HTMLButtonElement>('[data-tower-card="constructor"]')!.click();
+    expect(shields.textContent).toBe(messagesFor('zh').challenges.tower.shieldsLeft(2));
+
+    // pageshow 返回列表页时同步全通横幅及高亮按钮。
+    const store = new TowerProgressStore();
+    for (const floor of TOWER_FLOORS) store.markCleared(floor.id, floor.parSteps);
+    document.body.innerHTML = renderProofTower('zh');
+    mountProofTower(document.body, 'zh');
+    window.dispatchEvent(new Event('pageshow'));
+    expect(
+      document.body.querySelector<HTMLElement>('[data-role="tower-all-cleared-banner"]')?.hidden,
+    ).toBe(false);
+    expect(
+      document.body.querySelector('[data-tower-floor="f6"]')?.getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
 });

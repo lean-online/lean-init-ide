@@ -688,6 +688,7 @@ export const lessonsEn: LessonPage[] = [
     navTitle: '11 · Divisibility is multiplication',
     title: 'Divisibility is multiplication in disguise',
     lead: '`2 ∣ 6` says “there is a k with 6 = 2 × k”; it is not the same thing as `2 / 6`.',
+    prerequisites: ['intro', 'rcases', 'rw', '⟨ , ⟩'],
     blocks: [
       {
         kind: 'p',
@@ -893,6 +894,7 @@ export const lessonsEn: LessonPage[] = [
     navTitle: '14 · Contradiction and primes',
     title: 'Proof by contradiction, with primes',
     lead: 'A prime is not “a number that looks special”; it satisfies two properties: at least 2, and its only divisors are 1 and itself.',
+    prerequisites: ['intro', 'rcases', 'constructor', 'grind'],
     blocks: [
       {
         kind: 'p',
@@ -934,6 +936,11 @@ export const lessonsEn: LessonPage[] = [
         kind: 'note',
         text: 'Run it once, then change `2 ∣ 4` in `not_prime_four` to `3 ∣ 4` and see whether `grind` still finds a contradiction. Contradiction is only as good as its evidence.',
         tone: 'warn',
+      },
+      {
+        kind: 'details',
+        summary: 'What grind is saving you from writing by hand',
+        text: 'In `not_prime_one`, `h2 : 2 ≤ 1` directly contradicts arithmetic (`omega` closes it too). In `not_prime_four`, `hd 2 h2` gives `2 = 1 ∨ 2 = 4`; splitting both branches with `rcases` and closing them by `decide` / `omega` works too—`grind` automates that arithmetic case split in one line.',
       },
       {
         kind: 'details',
@@ -1672,6 +1679,7 @@ export const lessonsEn: LessonPage[] = [
     navTitle: '26 · Eliminate out-of-bounds',
     title: 'Eliminate out-of-bounds access: put `i < arr.size` in the signature',
     lead: 'Move the boundary check from a runtime if to the function signature and its proof.',
+    prerequisites: ['rw', 'rfl', 'Array'],
     blocks: [
       {
         kind: 'p',
@@ -1718,11 +1726,16 @@ export const lessonsEn: LessonPage[] = [
     ],
     exercise: {
       title: 'Exercise',
-      body: 'Prove that `arr[i]?` is `some` whenever the index is valid.',
+      body: 'Prove `getElem?_isSome`: `arr[i]?` is `some` whenever `h : i < arr.size`. Toolbox: `Array.getElem?_eq_getElem (xs := arr) (i := i) h : arr[i]? = some arr[i]`.',
       hint: 'First `rw [Array.getElem?_eq_getElem (xs := arr) (i := i) h]`, then `rfl`.',
+      hints: [
+        'Direction: rewrite `arr[i]?` into `some arr[i]` so `.isSome` reduces to `true`.',
+        'Lemma to call: `rw [Array.getElem?_eq_getElem (xs := arr) (i := i) h]`.',
+        'Full two-line proof: `rw [Array.getElem?_eq_getElem (xs := arr) (i := i) h]` followed by `rfl`.',
+      ],
       cta: 'Try it in the editor',
       starter:
-        'theorem getElem?_isSome (arr : Array Nat) (i : Nat) (h : i < arr.size) :\n    (arr[i]?).isSome = true := by\n  sorry\n',
+        '-- Toolbox: Array.getElem?_eq_getElem (xs := arr) (i := i) h : arr[i]? = some arr[i]\ntheorem getElem?_isSome (arr : Array Nat) (i : Nat) (h : i < arr.size) :\n    (arr[i]?).isSome = true := by\n  sorry\n',
     },
   },
   {

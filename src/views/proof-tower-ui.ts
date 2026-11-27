@@ -71,6 +71,18 @@ const renderMonsterSvg = (
 const FLOOR_PILL_BASE =
   'inline-flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center gap-1 rounded-full border px-3 text-xs font-bold transition';
 
+const formatTowerGoalProgress = (
+  tw: ReturnType<typeof messagesFor>['challenges']['tower'],
+  floor: TowerFloor,
+  goalsCount: number,
+  playedCount: number,
+  cleared: boolean,
+): string => {
+  if (cleared || goalsCount === 0) return tw.shieldsLeft(0);
+  if (goalsCount > 1) return tw.shieldsLeft(goalsCount);
+  return tw.stepProgress(Math.max(1, floor.parSteps - playedCount));
+};
+
 const renderFloorPills = (locale: Locale, activeId: TowerFloorId): string => {
   const tw = messagesFor(locale).challenges.tower;
   return TOWER_FLOORS.map((floor) => {
@@ -139,6 +151,7 @@ export const renderProofTower = (locale: Locale): string => {
       </nav>
 
       <div data-role="tower-arena" class="relative mt-4 overflow-hidden rounded-2xl border border-line bg-panel-soft p-4">
+        <p data-role="tower-all-cleared-banner" class="m-0 mb-3 rounded-xl border border-ok/45 bg-ok/10 px-3 py-2 text-xs font-bold text-ok" hidden></p>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-3">
             <div data-role="tower-monster-icon">${renderMonsterSvg(firstFloor.monsterId, 1, false)}</div>
@@ -148,7 +161,7 @@ export const renderProofTower = (locale: Locale): string => {
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span data-role="tower-shields" class="rounded-full border border-warn/40 bg-warn/10 px-3 py-1 font-mono text-xs font-bold text-warn">${escapeHtml(tw.shieldsLeft(1))}</span>
+            <span data-role="tower-shields" class="rounded-full border border-warn/40 bg-warn/10 px-3 py-1 font-mono text-xs font-bold text-warn">${escapeHtml(formatTowerGoalProgress(tw, firstFloor, firstFloor.initialGoals.length, 0, false))}</span>
             <span data-role="tower-verified-badge" class="rounded-full border border-ok/45 bg-ok/15 px-3 py-1 text-xs font-bold text-ok" hidden>${escapeHtml(tw.verifiedSeal)}</span>
           </div>
         </div>
@@ -177,7 +190,9 @@ export const renderProofTower = (locale: Locale): string => {
           <div class="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" data-role="tower-next" class="${buttonClass}">${escapeHtml(tw.nextFloorCta(2, TOWER_FLOORS[1]!.monsterName[locale]))}</button>
             <button type="button" data-role="tower-poster-btn" class="${ghostButtonClass}">${escapeHtml(tw.posterButton)}</button>
+            <button type="button" data-role="tower-copy-text" class="${ghostButtonClass}">${escapeHtml(tw.copyTextButton)}</button>
             <a data-role="tower-poster-dl" class="${ghostButtonClass}" download="lean-proof-tower.png" hidden>${escapeHtml(messagesFor(locale).challenges.detail.poster.downloadButton)}</a>
+            <span data-role="tower-copy-status" role="status" aria-live="polite" class="text-xs font-[650]" hidden></span>
           </div>
           <div data-role="tower-poster-wrap" class="mt-3" hidden>
             <img data-role="tower-poster-img" alt="${escapeHtml(messagesFor(locale).challenges.detail.poster.previewAlt)}" class="max-h-[320px] w-auto rounded-xl border border-line" />
@@ -239,6 +254,9 @@ export const mountProofTower = (root: HTMLElement, locale: Locale): void => {
   const comboEl = host.querySelector<HTMLElement>('[data-role="tower-combo"]');
   const sfxBtn = host.querySelector<HTMLButtonElement>('[data-role="tower-sfx"]');
   const arenaEl = host.querySelector<HTMLElement>('[data-role="tower-arena"]');
+  const allClearedBannerEl = host.querySelector<HTMLElement>(
+    '[data-role="tower-all-cleared-banner"]',
+  );
   const iconEl = host.querySelector<HTMLElement>('[data-role="tower-monster-icon"]');
   const titleEl = host.querySelector<HTMLElement>('[data-role="tower-floor-title"]');
   const premiseEl = host.querySelector<HTMLElement>('[data-role="tower-premise"]');
@@ -254,6 +272,8 @@ export const mountProofTower = (root: HTMLElement, locale: Locale): void => {
   const victoryDropEl = host.querySelector<HTMLElement>('[data-role="tower-victory-drop"]');
   const nextBtn = host.querySelector<HTMLButtonElement>('[data-role="tower-next"]');
   const posterBtn = host.querySelector<HTMLButtonElement>('[data-role="tower-poster-btn"]');
+  const copyTextBtn = host.querySelector<HTMLButtonElement>('[data-role="tower-copy-text"]');
+  const copyTextStatusEl = host.querySelector<HTMLElement>('[data-role="tower-copy-status"]');
   const posterDl = host.querySelector<HTMLAnchorElement>('[data-role="tower-poster-dl"]');
   const posterWrap = host.querySelector<HTMLElement>('[data-role="tower-poster-wrap"]');
   const posterImg = host.querySelector<HTMLImageElement>('[data-role="tower-poster-img"]');
@@ -325,10 +345,23 @@ export const mountProofTower = (root: HTMLElement, locale: Locale): void => {
     if (titleEl) titleEl.textContent = floor.title[locale];
     if (premiseEl) premiseEl.textContent = floor.premise[locale];
     if (shieldsEl) {
-      shieldsEl.textContent = tw.shieldsLeft(state.goals.length);
+      shieldsEl.textContent = formatTowerGoalProgress(
+        tw,
+        floor,
+        state.goals.length,
+        state.played.length,
+        state.cleared,
+      );
       shieldsEl.className = state.cleared
         ? 'rounded-full border border-ok/45 bg-ok/10 px-3 py-1 font-mono text-xs font-bold text-ok'
         : 'rounded-full border border-warn/40 bg-warn/10 px-3 py-1 font-mono text-xs font-bold text-warn';
+    }
+    if (allClearedBannerEl) {
+      const allCleared = clearedSet.size >= TOWER_FLOORS.length;
+      allClearedBannerEl.hidden = !allCleared;
+      if (allCleared) {
+        allClearedBannerEl.textContent = tw.allClearedBanner(clearedSet.size, TOWER_FLOORS.length);
+      }
     }
     if (verifiedBadgeEl) verifiedBadgeEl.hidden = !verifiedSet.has(floor.id);
 
@@ -433,6 +466,7 @@ export const mountProofTower = (root: HTMLElement, locale: Locale): void => {
     floorStartedAt = Date.now();
     if (posterWrap) posterWrap.hidden = true;
     if (posterDl) posterDl.hidden = true;
+    if (copyTextStatusEl) copyTextStatusEl.hidden = true;
     if (verifyStatusEl) verifyStatusEl.textContent = '';
     paintAll(false);
   };
@@ -589,6 +623,37 @@ export const mountProofTower = (root: HTMLElement, locale: Locale): void => {
         });
       }
     }
+  });
+
+  copyTextBtn?.addEventListener('click', async () => {
+    const snap = store.snapshot();
+    const rank = towerLadderRank(snap.cleared.length, locale);
+    const elapsed = formatElapsedMs(Date.now() - floorStartedAt);
+    const url = `${location.origin}/${locale}/challenges`;
+    const summary = `${tw.shareTextSummary(snap.cleared.length, TOWER_FLOORS.length, rank.tier, elapsed)} ${url}`;
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(summary);
+      if (copyTextStatusEl) {
+        copyTextStatusEl.textContent = tw.copyTextDone;
+        copyTextStatusEl.className = 'text-xs font-[650] text-ok';
+        copyTextStatusEl.hidden = false;
+      }
+    } catch {
+      if (copyTextStatusEl) {
+        copyTextStatusEl.textContent = tw.copyTextFailed;
+        copyTextStatusEl.className = 'text-xs font-[650] text-err';
+        copyTextStatusEl.hidden = false;
+      }
+    }
+  });
+
+  // 浏览器后退命中 bfcache 时重新对齐顶部楼层按钮高亮与默认未通关层。
+  window.addEventListener('pageshow', () => {
+    if (state.played.length === 0) {
+      state = createInitialTowerState(store.firstPendingFloor());
+    }
+    paintAll(false);
   });
 
   paintAll(false);

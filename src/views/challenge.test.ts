@@ -139,6 +139,21 @@ describe('挑战列表渲染', () => {
         ?.querySelector('[data-role="card-badges"]')?.textContent,
     ).toBe(t.badgeLabels.handcrafted);
     expect(untouched?.querySelector('[data-role="card-badges"]')?.textContent).toBe('');
+
+    // 从挑战详情页按浏览器后退回到列表页（pageshow / bfcache）时，λ 勋章等汇总实时同步。
+    localStorage.setItem(
+      'lean-init-ide:challenge-progress:v1',
+      JSON.stringify({
+        version: 1,
+        challenges: {
+          'add-comm': { solved: true, badges: ['term-mode'], tiers: [], bestChars: 35 },
+        },
+      }),
+    );
+    window.dispatchEvent(new Event('pageshow'));
+    expect(document.body.querySelector('[data-role="summary-badges"]')?.textContent).toBe(
+      t.summary.badges(0, 0, 1),
+    );
   });
 });
 
@@ -153,6 +168,11 @@ describe('挑战详情渲染', () => {
     expect(html).toContain(challenge.hint.zh);
     expect(html).toContain(escapeHtml(challenge.solution.zh));
     expect(html).toContain('data-ssr-markup="full"');
+    expect(html).not.toContain('data-role="share"');
+    expect(html).toContain(escapeHtml(t.detail.modeEyebrow(t.modes[challenge.mode])));
+    expect(html.indexOf('data-role="challenge-result"')).toBeLessThan(
+      html.indexOf('data-role="challenge-panel"'),
+    );
     expect(html).toContain('data-role="challenge-panel"');
     expect(html).toContain('data-role="goal-progress"');
     expect(html).toContain('data-role="challenge-intro"');

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearDraft, draftKeyFor, readDraft, saveDraft } from './draft';
+import { clearDraft, draftKeyFor, hashStarter, readDraft, saveDraft } from './draft';
 
 describe('练习草稿', () => {
   beforeEach(() => localStorage.clear());
@@ -9,11 +9,15 @@ describe('练习草稿', () => {
     expect(draftKeyFor('first-proof')).toBe('lean:draft:first-proof');
   });
 
-  it('保存后能读回代码与时间戳', () => {
-    saveDraft('lean:draft:first-proof', 'example : True := by trivial');
-    const draft = readDraft('lean:draft:first-proof');
+  it('保存后能读回代码与时间戳，模板指纹不匹配时自动失效防串题', () => {
+    const h1 = hashStarter('theorem nat_add_zero := sorry');
+    const h2 = hashStarter('theorem two_add_two := sorry');
+    saveDraft('lean:draft:first-proof', 'example : True := by trivial', h1);
+    const draft = readDraft('lean:draft:first-proof', h1);
     expect(draft?.code).toBe('example : True := by trivial');
     expect(draft?.updatedAt).toBeTypeOf('number');
+    expect(draft?.starterHash).toBe(h1);
+    expect(readDraft('lean:draft:first-proof', h2)).toBeNull();
   });
 
   it('清空后读不到草稿', () => {

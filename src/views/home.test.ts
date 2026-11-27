@@ -15,10 +15,11 @@ describe('首页渲染', () => {
     expect(renderHome('en')).toContain('data-home-cta="hero-challenges" href="/en/challenges"');
   });
 
-  it('有完成进度时继续学习指向第一节未完成课', () => {
+  it('有完成进度时继续学习精确显示下一节未完成课号', () => {
     const html = renderHome('zh', new Set(['what-is-lean']), new Set(['what-is-lean']));
     expect(html).toContain('href="/zh/learn/first-proof"');
-    expect(html).toContain(messagesFor('zh').home.continueCta);
+    expect(html).toContain(messagesFor('zh').home.continueCta(2));
+    expect(renderHome('zh')).toContain(messagesFor('zh').home.ctaPrimary);
   });
 
   it('只有已读、没有完成时，继续学习回到第一节未完成课', () => {
@@ -96,7 +97,9 @@ describe('首页渲染', () => {
     expect(document.body.querySelector('h1')).toBe(originalH1);
     const primary = document.body.querySelector<HTMLAnchorElement>('[data-home-cta="primary"]');
     expect(primary?.getAttribute('href')).toBe('/zh/learn/first-proof');
-    expect(primary?.textContent).toBe(messagesFor('zh').home.continueCta);
+    expect(primary?.querySelector('[data-home-cta-label]')?.textContent).toBe(
+      messagesFor('zh').home.continueCta(2),
+    );
     const intro = document.body.querySelector<HTMLAnchorElement>('[data-home-cta="intro"]');
     expect(intro?.getAttribute('href')).toBe('/zh/learn/first-proof');
     const mathLessons = LESSON_CATALOG.filter((lesson) => lesson.track === 'math');

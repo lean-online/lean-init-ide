@@ -33,9 +33,9 @@ export const zh: Messages = {
     clearCacheFailed: '清理失败，请稍后重试。',
   },
   home: {
-    eyebrow: 'Lean 4.36.0 · Init + Std + Batteries · 浏览器内 LSP',
-    title: '在浏览器里跑真正的 Lean 4 定理证明器',
-    lead: '不是正则模拟，也不是把代码发到云端：完整编译器和语言服务器就塞在 Web Worker 里。打开网页 30 秒，写下第一行证明。',
+    eyebrow: '零安装 · 浏览器里的交互式数学证明',
+    title: '不用装环境，像打牌一样写出你的第一行数学证明',
+    lead: '不是模拟演示，也不是把代码发到云端：完整 Lean 4 证明检查器就在浏览器里运行。先看 5 秒示例或玩一把爬塔，随时切入第一课。',
     seoDescription:
       '在浏览器里运行 Lean 4.36.0 定理证明器：完整编译器与语言服务器以 WebAssembly 在 Web Worker 中运行，内置 Init，Std 与 Batteries 按需加载，零后端，代码不会上传，同时提供双语课程、速查表与在线编辑器。',
     facts: (lessonCount) =>
@@ -43,11 +43,15 @@ export const zh: Messages = {
     factsRepo: 'GitHub 仓库',
     heroNote:
       '单元测试只能测出你写到的那几个用例没错；Lean 能用数学逻辑把所有可能输入一次性证死，错一步编译器当场红线拦住。',
-    ctaPrimary: '从第一课开始',
-    continueCta: '继续学习',
+    ctaPrimary: '从第 1 课开始',
+    ctaPrimarySub: '约 3 分钟 · 系统入门',
+    continueCta: (lessonNumber) => `继续第 ${lessonNumber} 课`,
     ctaSecondary: '直接打开编辑器',
+    ctaSecondarySub: '老手专用',
     ctaArcade: '🎮 趣味数学闯关',
+    ctaArcadeSub: '0 MB 秒玩 · 1 分钟上手',
     featuresTitle: '底层架构拆解',
+    featuresLead: 'Lean 4.36.0 · Init + Std + Batteries · 浏览器内 LSP · 客户端零后端',
     features: [
       {
         title: '真编译器，不是模拟',
@@ -118,11 +122,12 @@ export const zh: Messages = {
       hypothesesLabel: '已知武器（Assumptions）',
       activeGoalLabel: '当前目标（Active Goal）',
       queuedGoalLabel: '后续待破护盾',
-      shieldsLeft: (count) => (count === 0 ? '护盾清零' : `剩余护盾 ${count}`),
+      shieldsLeft: (count) => (count === 0 ? '护盾清零' : `剩余子目标 ${count}`),
+      stepProgress: (remainingSteps) => `目标 1 个 · 还差 ${remainingSteps} 步`,
       playedLabel: '已拼出的 Lean 证明步：',
       undoButton: '↩ 撤销一步',
       resetButton: '↺ 重开本层',
-      idleLog: '盯住下方「当前目标」，点一张技能牌发起攻击！',
+      idleLog: '盯住上方「当前目标」，点一张技能牌发起攻击！',
       clearedStamp: 'FLOOR CLEARED',
       clearedTitle: (monster) => `⚔️ 击破「${monster}」！`,
       unlockedDrop: (skill) => `✨ 技能掉落：${skill}`,
@@ -130,7 +135,14 @@ export const zh: Messages = {
       allClearedTitle: '🏆 恭喜通关 6 层证明天梯！',
       allClearedBody:
         '你已经亲手掌握 rfl / rw / ← / intro / apply / constructor / unfold / omega 全套 Lean 4 实战连招！',
+      allClearedBanner: (cleared, total) =>
+        `🏆 已全通 ${cleared} / ${total} 层 · 点击上方任意楼层复盘或生成分享战报`,
       posterButton: '🖼️ 生成爬塔战报海报',
+      copyTextButton: '📋 复制纯文本战报',
+      copyTextDone: '纯文本战报已复制',
+      copyTextFailed: '复制失败，请手动复制',
+      shareTextSummary: (cleared, total, tier, elapsed) =>
+        `我在 Lean 证明爬塔通关了 ${cleared}/${total} 层，拿到${tier}（耗时 ${elapsed}）！0 MB 浏览器秒玩 👉`,
       toggleCodeButton: '👁️ 查看真 Lean 4 代码',
       verifyButton: '⚡ 用真 Lean 4.36 内核认证（首次约 102 MB）',
       verifyNote:
@@ -199,6 +211,17 @@ export const zh: Messages = {
     },
     detail: {
       back: '← 返回挑战列表',
+      modeEyebrow: (modeLabel) => `证明游乐场 · ${modeLabel}`,
+      onboardingTitle: '30 秒上手这一关（看过即关闭）',
+      onboardingSteps: [
+        {
+          title: '1. 先看上方题目与目标',
+          text: '重点看「⊢」后面 Lean 要你交出的结论，不需要先背语法。',
+        },
+        { title: '2. 点「启动 Lean」开始判题', text: '首次加载约 102 MB（仅一次，后续秒开）。' },
+        { title: '3. 卡住了直接用出招卡', text: '随时点下方「展开参考出招卡」一键体验完整证明。' },
+      ],
+      onboardingDismiss: '知道了，不再提示',
       goalsRemaining: (count) => `当前还剩 ${count} 个待证目标`,
       goalsNone: '当前没有待证目标：把光标放进证明里，Goal 面板会实时更新',
       tacticsTitle: '出招卡：参考解法与流派切换',
@@ -207,7 +230,7 @@ export const zh: Messages = {
       tacticsDisclosure: '🃏 卡住了或想刷流派勋章？展开参考出招卡（含完整证明）',
       verdictTacticsDisclosure: '卡住了？展开推荐出招卡（会揭晓真假方向）',
       runtimeNotice:
-        '互动舞台 0 MB 秒玩；下方 Lean 4.36 真内核首次启动需下载约 102 MB（仅存本地缓存，后续免重下），不会在后台偷偷拉取。',
+        '本关运行完整 Lean 4.36 浏览器编译器，首次启动需下载约 102 MB（仅存本地缓存，后续免重下），不会在后台偷偷拉取。',
       sfxOn: '🔊 音效开',
       sfxOff: '🔇 静音',
       timerLabel: (formatted) => `⏱️ ${formatted}`,
@@ -254,6 +277,7 @@ export const zh: Messages = {
       solvedBadges: (badges) => `本次点亮：${badges}`,
       solvedTiers: (tiers) => `悬赏进度：${tiers}`,
       bestChars: (count) => `最短纪录：${count} 字符`,
+      newRecordLabel: '🎉 破个人最短纪录！',
       copyCard: '复制战绩卡片',
       copyCardDone: '战绩卡片已复制',
       copyCardFailed: '复制失败，请手动选择文本',
@@ -288,6 +312,9 @@ export const zh: Messages = {
     runInEditor: '运行',
     goalLabel: 'Goal 变化',
     hintLabel: '提示',
+    hintStepLabel: (index, total) => `第 ${index}/${total} 层提示`,
+    prereqLabel: '前置技能',
+    prereqReview: '忘了？去 30 秒速查',
     runCrashed: '运行失败：Lean 进程可能已崩溃，代码已保留。',
     restartLean: '重启 Lean',
     restarting: '正在重启…',
@@ -371,6 +398,7 @@ end
     backToLesson: '回到本课',
     lessonNoticeTitle: '当前课时练习',
     lessonNoticeHint: '查看提示',
+    lessonNoticeHintStep: (index, total) => `查看第 ${index}/${total} 层提示`,
     challengeNoticeTitle: '已从趣味挑战进入',
     challengeNoticeBody: '题面就在下方；如果本机已有编辑器草稿，我们不会自动覆盖。',
     challengeNoticeLoad: '载入本题骨架',
@@ -425,7 +453,7 @@ end
     statusLowMemory: '低内存设备 · 手动启动',
     lowMemoryHint:
       '检测到可用内存偏小：启动 Lean 需要约 400MB 空闲内存，已关闭自动下载。确认设备有余量后手动点「启动 Lean」。',
-    statusLoading: '加载运行时…（首次约 102MB）',
+    statusLoading: '正在下载/加载 Lean 内核（首次约 102 MB）…',
     statusStarting: '启动 LSP…',
     statusChunks: (loaded, total) => `${loaded} / ${total} MB`,
     statusChunkFallback: (name, message) => `分片回退 ${name}：${message}`,

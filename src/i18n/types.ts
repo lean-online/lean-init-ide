@@ -28,11 +28,15 @@ export type LessonPage = {
    * 避免用户看到 `unknown module prefix 'Std'` 才发现要手动开库。
    */
   requires?: LessonLibrary[];
+  /** 前置技能标签，在进阶课顶部提醒需要的先备知识。 */
+  prerequisites?: string[];
   blocks: LessonBlock[];
   exercise?: {
     title: string;
     body: string;
     hint?: string;
+    /** 渐进式分层提示：按「思路 → 引理 → 完整写法」逐步解锁。 */
+    hints?: string[];
     cta: string;
     starter: string;
   };
@@ -84,12 +88,18 @@ export type Messages = {
     facts: (lessonCount: number) => string;
     factsRepo: string;
     ctaPrimary: string;
-    /** 已有进度时的主按钮文案。 */
-    continueCta: string;
+    /** 首屏主按钮副标签。 */
+    ctaPrimarySub: string;
+    /** 已有进度时的主按钮文案（精确到下一节未完成课号）。 */
+    continueCta: (lessonNumber: number) => string;
     ctaSecondary: string;
+    ctaSecondarySub: string;
     /** 首屏并列的趣味数学闯关入口。 */
     ctaArcade: string;
+    ctaArcadeSub: string;
     featuresTitle: string;
+    /** 底层架构区块副标题（技术栈与协议标签收口到这里）。 */
+    featuresLead: string;
     features: Array<{ title: string; body: string }>;
     limitsTitle: string;
     limitsBody: string;
@@ -132,6 +142,8 @@ export type Messages = {
       activeGoalLabel: string;
       queuedGoalLabel: string;
       shieldsLeft: (count: number) => string;
+      /** 单目标关卡的剩余步数提示，避免“破半盾但目标数仍是 1”的割裂。 */
+      stepProgress: (remainingSteps: number) => string;
       playedLabel: string;
       undoButton: string;
       resetButton: string;
@@ -142,7 +154,12 @@ export type Messages = {
       nextFloorCta: (level: number, monster: string) => string;
       allClearedTitle: string;
       allClearedBody: string;
+      allClearedBanner: (cleared: number, total: number) => string;
       posterButton: string;
+      copyTextButton: string;
+      copyTextDone: string;
+      copyTextFailed: string;
+      shareTextSummary: (cleared: number, total: number, tier: string, elapsed: string) => string;
       toggleCodeButton: string;
       verifyButton: string;
       verifyNote: string;
@@ -200,6 +217,12 @@ export type Messages = {
     };
     detail: {
       back: string;
+      /** 挑战详情页顶部按所属模式动态展示眉标。 */
+      modeEyebrow: (modeLabel: string) => string;
+      /** 首次进入自由挑战页的可关闭 3 步速览横幅。 */
+      onboardingTitle: string;
+      onboardingSteps: Array<{ title: string; text: string }>;
+      onboardingDismiss: string;
       /** Goal 面板旁的通俗进度：还剩几个待证目标。 */
       goalsRemaining: (count: number) => string;
       goalsNone: string;
@@ -256,6 +279,7 @@ export type Messages = {
       solvedBadges: (badges: string) => string;
       solvedTiers: (tiers: string) => string;
       bestChars: (count: number) => string;
+      newRecordLabel: string;
       copyCard: string;
       copyCardDone: string;
       copyCardFailed: string;
@@ -280,6 +304,11 @@ export type Messages = {
     goalLabel: string;
     /** 练习折叠提示的标题。 */
     hintLabel: string;
+    /** 分层提示标题（例如：提示 1/3）。 */
+    hintStepLabel: (index: number, total: number) => string;
+    /** 课程顶部前置技能提醒与回顾链接。 */
+    prereqLabel: string;
+    prereqReview: string;
     /** 课程代码块运行失败时的恢复文案。 */
     runCrashed: string;
     restartLean: string;
@@ -362,6 +391,7 @@ export type Messages = {
     /** Playground 通过 ?lesson= 载入课后练习时展示的本课题目与提示。 */
     lessonNoticeTitle: string;
     lessonNoticeHint: string;
+    lessonNoticeHintStep: (index: number, total: number) => string;
     /** Playground 通过 ?challenge= 载入挑战题时的题面与草稿提示。 */
     challengeNoticeTitle: string;
     challengeNoticeBody: string;

@@ -29,6 +29,12 @@ describe('通关战报海报生成', () => {
     const lines = wrapPosterText('非常长的数学证明题目需要自动分成多行显示以免越界被裁剪掉', 14, 2);
     expect(lines).toHaveLength(2);
     expect(lines[1]!.endsWith('…')).toBe(true);
+
+    // 英文单词应整词换行，绝不在行尾被劈成两半（例如 omega -> o / mega）。
+    const mixedLines = wrapPosterText('6F · 钱包安全锁：unfold 与 omega 自动破盾', 26, 3);
+    expect(mixedLines.join('\n')).toContain('omega');
+    expect(mixedLines.join('\n')).not.toMatch(/\bo\n+mega\b/);
+    expect(mixedLines.join('\n')).toContain('unfold');
   });
 
   it('中英文海报规格文本完整且英文版不含任何中文字符', () => {

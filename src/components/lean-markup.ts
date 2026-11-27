@@ -243,6 +243,8 @@ export type LeanMarkupOptions = {
    * 只保留状态、启动与库/面板菜单，避免一页出现两个 H1。
    */
   heading?: boolean;
+  /** 挑战详情页顶部已有独立分享入口，隐藏编辑器工具栏重复的分享按钮。 */
+  hideShare?: boolean;
 };
 
 export const renderLeanMarkup = (
@@ -388,9 +390,9 @@ export const renderLeanMarkup = (
           <button class="${ghostButtonClass}" type="button" data-role="export">${t.exportCode}</button>
           <button class="${ghostButtonClass}" type="button" data-role="import">${t.importCode}</button>
           <input type="file" accept=".lean,.txt,text/plain" data-role="import-input" hidden />
-          <button class="${ghostButtonClass}" type="button" data-role="share">${t.shareCode}</button>
+          ${options.hideShare ? '' : `<button class="${ghostButtonClass}" type="button" data-role="share">${t.shareCode}</button>`}
           <button class="${ghostButtonClass}" type="button" data-role="symbols-toggle" aria-expanded="false" aria-controls="lean-symbols-bar" title="${t.symbolsHint}">${t.symbolsTitle}</button>
-          <span data-role="share-status" role="status" aria-live="polite" class="text-xs text-muted"></span>
+          ${options.hideShare ? '' : '<span data-role="share-status" role="status" aria-live="polite" class="text-xs text-muted"></span>'}
           <span data-role="passed" hidden class="ml-auto inline-flex items-center gap-1.5 rounded-full border border-ok/45 bg-ok/10 px-3 py-1 text-xs font-[650] text-ok">✓ ${t.lessonPassed}</span>
         </div>
         <div
