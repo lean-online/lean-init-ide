@@ -682,6 +682,7 @@ export const lessonsZh: LessonPage[] = [
     navTitle: '11 · 整除不是除法',
     title: '整除不是除法，而是「能写成乘法」',
     lead: '`2 ∣ 6` 说的是「存在一个 k，使 6 = 2 × k」，它和 `2 / 6` 完全不是一回事。',
+    prerequisites: ['intro', 'rcases', 'rw', '⟨ , ⟩'],
     blocks: [
       {
         kind: 'p',
@@ -694,15 +695,15 @@ export const lessonsZh: LessonPage[] = [
       { kind: 'code', code: '#check (2 ∣ 6)\n\nexample : 2 ∣ 6 := ⟨3, rfl⟩' },
       {
         kind: 'p',
-        text: '`⟨3, rfl⟩` 就是证据：`3` 是那个 `k`，`rfl` 表示 `6` 和 `2 × 3` 按定义相等。证明存在性命题，核心就是构造 witness。',
+        text: '`⟨3, rfl⟩` 就是证据：`3` 是那个 `k`，`rfl` 表示 `6` 和 `2 × 3` 按定义相等。证明存在性命题，核心就是构造「见证者」（witness，即你具体找出来的那个数）。',
       },
       {
         kind: 'goal',
-        text: '证明开始：⊢ 2 ∣ 6\n把 ∣ 读成存在量词：⊢ ∃ k, 6 = 2 * k\n提供 witness 3：⊢ 6 = 2 * 3\nrfl 收尾：没有剩余目标',
+        text: '证明开始：⊢ 2 ∣ 6\n把 ∣ 读成存在量词：⊢ ∃ k, 6 = 2 * k\n提供见证者 3：⊢ 6 = 2 * 3\nrfl 收尾：没有剩余目标',
       },
       {
         kind: 'p',
-        text: '整除可以传递：如果 `a` 整除 `b`，`b` 整除 `c`，那么 `a` 整除 `c`。证明方法就是把两个 witness 乘起来。',
+        text: '整除可以传递：如果 `a` 整除 `b`，`b` 整除 `c`，那么 `a` 整除 `c`。证明方法就是把两个见证者乘起来。',
       },
       {
         kind: 'code',
@@ -710,7 +711,7 @@ export const lessonsZh: LessonPage[] = [
       },
       {
         kind: 'p',
-        text: '两个数都被 `a` 整除，它们的和也被 `a` 整除。同样是把两个 witness 相加。',
+        text: '两个数都被 `a` 整除，它们的和也被 `a` 整除。同样是把两个见证者相加。',
       },
       {
         kind: 'code',
@@ -726,12 +727,12 @@ export const lessonsZh: LessonPage[] = [
         summary: '从 List 到数学：怎么把 ∣ 拆开？',
         text: '`rcases h with ⟨k, rfl⟩` 会直接把目标里的 `b` 替换成 `a * k`，所以后面经常能直接 `rfl` 或 `rw [Nat.mul_assoc]` 收尾。`rfl` 能成立，是因为替换后两边变成了同一个表达式。',
       },
-      { kind: 'note', text: '一句话带走：`a ∣ b` 就是 `∃ k, b = a * k`；证明它，交 witness。' },
+      { kind: 'note', text: '一句话带走：`a ∣ b` 就是 `∃ k, b = a * k`；证明它，交出见证者。' },
     ],
     exercise: {
       title: '练习',
       body: '证明 `dvd_mul_right`：「如果 `a ∣ b`，那么 `a ∣ b * c`」。',
-      hint: '`rcases h with ⟨k, rfl⟩`，然后交出新 witness `k * c`，用 `rw [Nat.mul_assoc]`（或 `grind`）收尾。',
+      hint: '`rcases h with ⟨k, rfl⟩`，然后交出新见证者 `k * c`，用 `rw [Nat.mul_assoc]`（或 `grind`）收尾。',
       cta: '在编辑器中动手',
       starter: 'theorem dvd_mul_right (a b c : Nat) (h : a ∣ b) : a ∣ b * c := by\n  sorry\n',
     },
@@ -881,6 +882,7 @@ export const lessonsZh: LessonPage[] = [
     navTitle: '14 · 反证法与素数',
     title: '反证法怎么写：想找反例却把自己逼进死胡同',
     lead: '素数不是「看起来很特别」的数，而是满足两条性质的数：至少为 2，且因子只有 1 和它自己。',
+    prerequisites: ['intro', 'rcases', 'constructor', 'grind'],
     blocks: [
       {
         kind: 'p',
@@ -919,6 +921,11 @@ export const lessonsZh: LessonPage[] = [
         kind: 'note',
         text: '动手跑一次：把 `not_prime_four` 里的 `2 ∣ 4` 改成 `3 ∣ 4`，看 `grind` 还能不能找到矛盾。反证法最怕证据本身不成立。',
         tone: 'warn',
+      },
+      {
+        kind: 'details',
+        summary: '看看 grind 背后替你省了哪几步',
+        text: '`not_prime_one` 中 `h2 : 2 ≤ 1` 与算术公理直接矛盾（手写等价于 `omega` 或 `contradiction`）；`not_prime_four` 中 `hd 2 h2` 得出 `2 = 1 ∨ 2 = 4`，`rcases` 拆成两条分支后分别 `contradiction` / `decide` 即可收尾，`grind` 把这段枯燥算术分类一次跑完了。',
       },
       {
         kind: 'details',
@@ -1636,6 +1643,7 @@ export const lessonsZh: LessonPage[] = [
     navTitle: '26 · 消除数组越界',
     title: '消除数组越界：把 `i < arr.size` 写进函数签名',
     lead: '把边界条件从运行期 if 检查，前移到函数签名和证明里。',
+    prerequisites: ['rw', 'rfl', 'Array'],
     blocks: [
       {
         kind: 'p',
@@ -1682,11 +1690,16 @@ export const lessonsZh: LessonPage[] = [
     ],
     exercise: {
       title: '练习',
-      body: '证明下标合法时 `arr[i]?` 一定是 `some`。',
-      hint: '先 `rw [Array.getElem?_eq_getElem (xs := arr) (i := i) h]`，再 `rfl`。',
+      body: '证明 `getElem?_isSome`：下标合法 `h : i < arr.size` 时 `arr[i]?` 一定是 `some`。本关可用工具箱：`Array.getElem?_eq_getElem (xs := arr) (i := i) h : arr[i]? = some arr[i]`。',
+      hint: '先用 `Array.getElem?_eq_getElem (xs := arr) (i := i) h` 改写，再 `rfl`。',
+      hints: [
+        '思路方向：目标是 `(arr[i]?).isSome = true`，只要先把 `arr[i]?` 重写成 `some arr[i]`，`isSome` 就会自动化简成 `true`。',
+        '可用标准库引理：`rw [Array.getElem?_eq_getElem (xs := arr) (i := i) h]`（用具名参数把数组 `arr` 和下标证明 `h` 传给它）。',
+        '完整两行证明：`rw [Array.getElem?_eq_getElem (xs := arr) (i := i) h]` 换行写 `rfl`。',
+      ],
       cta: '在编辑器中动手',
       starter:
-        'theorem getElem?_isSome (arr : Array Nat) (i : Nat) (h : i < arr.size) :\n    (arr[i]?).isSome = true := by\n  sorry\n',
+        '-- 本关可用工具箱：Array.getElem?_eq_getElem (xs := arr) (i := i) h : arr[i]? = some arr[i]\ntheorem getElem?_isSome (arr : Array Nat) (i : Nat) (h : i < arr.size) :\n    (arr[i]?).isSome = true := by\n  sorry\n',
     },
   },
   {

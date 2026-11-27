@@ -298,6 +298,33 @@ export const renderLesson = (locale: Locale, slug?: string): string => {
       }
     </nav>`;
 
+  const renderHints = () => {
+    if (!page.exercise) return '';
+    const list = page.exercise.hints?.length
+      ? page.exercise.hints
+      : page.exercise.hint
+        ? [page.exercise.hint]
+        : [];
+    if (list.length === 0) return '';
+    if (list.length === 1) {
+      return `<details class="mb-4 rounded-lg border border-line bg-panel px-4 py-3">
+        <summary class="flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center text-[13px] font-semibold text-fg">${escapeHtml(t.hintLabel)}</summary>
+        <p class="mb-0 mt-2 text-[13.5px] leading-relaxed text-muted">${renderInlineCode(list[0]!)}</p>
+      </details>`;
+    }
+    return `<div class="mb-4 flex flex-col gap-2" data-role="progressive-hints">
+      ${list
+        .map(
+          (item, idx) => `
+          <details class="rounded-lg border border-line bg-panel px-4 py-2.5">
+            <summary class="flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center text-[13px] font-semibold text-fg">${escapeHtml(t.hintStepLabel(idx + 1, list.length))}</summary>
+            <p class="mb-0 mt-2 text-[13.5px] leading-relaxed text-muted">${renderInlineCode(item)}</p>
+          </details>`,
+        )
+        .join('')}
+    </div>`;
+  };
+
   const exercise = page.exercise
     ? `
       <section class="mt-8 rounded-2xl border border-accent bg-accent-soft p-6">
@@ -315,14 +342,7 @@ export const renderLesson = (locale: Locale, slug?: string): string => {
               )}</p>`
             : ''
         }
-        ${
-          page.exercise.hint
-            ? `<details class="mb-4 rounded-lg border border-line bg-panel px-4 py-3">
-                 <summary class="flex min-h-9 max-[1024px]:min-h-11 touch:min-h-11 cursor-pointer items-center text-[13px] font-semibold text-fg">${escapeHtml(t.hintLabel)}</summary>
-                 <p class="mb-0 mt-2 text-[13.5px] leading-relaxed text-muted">${renderInlineCode(page.exercise.hint)}</p>
-               </details>`
-            : ''
-        }
+        ${renderHints()}
         <a class="${buttonClass} max-[520px]:w-full" href="/${locale}/playground?lesson=${page.slug}">${escapeHtml(page.exercise.cta)}</a>
       </section>`
     : '';
@@ -411,8 +431,22 @@ export const renderLesson = (locale: Locale, slug?: string): string => {
         ${mobileToc}
         <header>
           <p class="mt-0 mb-2 text-xs uppercase tracking-[0.12em] text-accent">${escapeHtml(t.tracks[trackOf(page)].title)}</p>
-          <h1 class="mt-0 mb-3 text-[clamp(28px,4.2vw,40px)] tracking-[-0.015em]">${escapeHtml(page.title)}</h1>
-          <p class="mt-0 mb-8 text-base leading-relaxed text-muted">${escapeHtml(page.lead)}</p>
+          <h1 class="mt-0 mb-3 text-[clamp(28px,4.2vw,40px)] tracking-[-0.015em]">${renderInlineCode(page.title)}</h1>
+          <p class="mt-0 mb-4 text-base leading-relaxed text-muted">${renderInlineCode(page.lead)}</p>
+          ${
+            page.prerequisites?.length
+              ? `<div data-role="lesson-prerequisites" class="mb-7 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-panel-soft px-3.5 py-2 text-xs">
+                   <span class="font-[650] text-muted">${escapeHtml(t.prereqLabel)}：</span>
+                   ${page.prerequisites
+                     .map(
+                       (item) =>
+                         `<code class="rounded border border-line bg-panel px-1.5 py-0.5 font-mono text-[11.5px] text-fg">${escapeHtml(item)}</code>`,
+                     )
+                     .join('')}
+                   <a class="ml-auto font-[650] text-accent no-underline hover:underline" href="/${locale}/reference">${escapeHtml(t.prereqReview)} →</a>
+                 </div>`
+              : '<div class="mb-4"></div>'
+          }
         </header>
         ${body.html}
         ${exercise}

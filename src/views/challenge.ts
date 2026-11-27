@@ -64,6 +64,24 @@ export const challengeDraftKey = (slug: string): string => draftKeyFor(`challeng
 const playgroundLink = (locale: Locale, slug: string): string =>
   `/${locale}/playground?challenge=${encodeURIComponent(slug)}`;
 
+const CHALLENGE_ONBOARDED_KEY = 'lean:challenge-onboarded';
+
+const isChallengeOnboarded = (): boolean => {
+  try {
+    return localStorage.getItem(CHALLENGE_ONBOARDED_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const markChallengeOnboarded = (): void => {
+  try {
+    localStorage.setItem(CHALLENGE_ONBOARDED_KEY, '1');
+  } catch {
+    // 隐私模式下忽略写入失败，不影响做题。
+  }
+};
+
 /** 四大主题游乐区固定顺序，先把最具传播感与 0 MB 互动实验台的展区放前面。 */
 const MODE_ORDER: readonly ChallengeMode[] = ['verdict', 'bugfix', 'bounty', 'classic'];
 
@@ -245,6 +263,10 @@ export const mountChallenges = (root: HTMLElement, locale: Locale): void => {
 
   refreshProgress();
   bindProgressBackup(root, t, store, refreshProgress);
+  window.addEventListener('pageshow', refreshProgress);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshProgress();
+  });
 };
 
 export const renderChallenge = (locale: Locale, slug: string | undefined): string => {
@@ -323,13 +345,31 @@ export const renderChallenge = (locale: Locale, slug: string | undefined): strin
         </div>
       </div>
       <div class="mt-3 max-w-[760px]">
-        <p class="m-0 mb-2 text-xs uppercase tracking-[0.12em] text-accent">${t.eyebrow}</p>
+        <p class="m-0 mb-2 text-xs uppercase tracking-[0.12em] text-accent">${escapeHtml(detail.modeEyebrow(t.modes[challenge.mode]))}</p>
         <h1 class="mt-0 mb-3 text-[clamp(26px,4vw,38px)] tracking-[-0.02em]">${escapeHtml(challenge.title[locale])}</h1>
         <p class="m-0 text-[15px] leading-relaxed text-muted">${escapeHtml(challenge.body[locale])}</p>
         <p data-role="challenge-record" class="mt-2 mb-0 text-xs font-[650] text-ok" hidden></p>
       </div>
 
       <p data-role="runtime-notice" class="mt-4 mb-0 max-w-[760px] rounded-xl border border-line bg-panel px-3.5 py-2 text-xs leading-relaxed text-muted">${escapeHtml(detail.runtimeNotice)}</p>
+
+      <aside data-role="challenge-onboarding" class="mt-3 max-w-[760px] rounded-xl border border-accent/40 bg-accent-soft p-3.5" hidden>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="m-0 text-xs font-bold text-accent">${escapeHtml(detail.onboardingTitle)}</p>
+          <button type="button" data-role="dismiss-onboarding" class="${toolbarButtonClass}">${escapeHtml(detail.onboardingDismiss)}</button>
+        </div>
+        <ol class="m-0 mt-2.5 grid list-none grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2 p-0">
+          ${detail.onboardingSteps
+            .map(
+              (step) => `
+              <li class="rounded-lg border border-line bg-panel px-3 py-2">
+                <p class="m-0 text-xs font-[650] text-fg">${escapeHtml(step.title)}</p>
+                <p class="mt-1 mb-0 text-[11.5px] leading-relaxed text-muted">${escapeHtml(step.text)}</p>
+              </li>`,
+            )
+            .join('')}
+        </ol>
+      </aside>
 
       ${verdictSwitch}
 
@@ -349,15 +389,16 @@ export const renderChallenge = (locale: Locale, slug: string | undefined): strin
         ${tacticsSectionContent}
       </section>
 
-      <div data-role="challenge-panel" class="mt-3">${renderLeanMarkup(locale, 'full', panelMessages, undefined, { heading: false })}</div>
-
       <section data-role="challenge-result" class="relative mt-4 overflow-hidden rounded-2xl border border-ok/45 bg-ok/10 p-5 text-ok" aria-live="polite" hidden>
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p data-role="result-title" class="m-0 text-[18px] font-bold"></p>
             <p data-role="result-badges" class="m-0 mt-1.5 text-sm"></p>
             <p data-role="result-tiers" class="m-0 mt-1 text-sm" hidden></p>
-            <p data-role="result-chars" class="m-0 mt-1 text-sm"></p>
+            <div class="mt-1 flex flex-wrap items-center gap-2">
+              <p data-role="result-chars" class="m-0 text-sm"></p>
+              <span data-role="result-new-record" class="rounded-full border border-warn/45 bg-warn/15 px-2 py-0.5 text-xs font-bold text-warn" hidden>${escapeHtml(detail.newRecordLabel)}</span>
+            </div>
           </div>
           <div class="flex flex-col items-end gap-1.5">
             <span data-role="result-stamp" class="arcade-stamp rounded-lg border-2 border-ok px-3 py-1 font-mono text-xs font-extrabold tracking-wider">${escapeHtml(stampLabel)}</span>
@@ -384,6 +425,8 @@ export const renderChallenge = (locale: Locale, slug: string | undefined): strin
           </div>
         </div>
       </section>
+
+      <div data-role="challenge-panel" class="mt-3">${renderLeanMarkup(locale, 'full', panelMessages, undefined, { heading: false, hideShare: true })}</div>
 
       <div class="mt-6 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3.5">
         <details data-role="hint" class="rounded-xl border border-line bg-panel p-4">
@@ -511,6 +554,7 @@ export const mountChallenge = async (
     showEditorLoadFailure(panelHost, panelMessages, () => {
       panelHost.innerHTML = renderLeanMarkup(locale, 'full', panelMessages, undefined, {
         heading: false,
+        hideShare: true,
       });
       void mountChallenge(root, locale, slug);
     });
@@ -522,12 +566,23 @@ export const mountChallenge = async (
   const store = new ChallengeProgressStore();
   const spec = challengeSpec(challenge, locale);
   const solutionChars = analyzeProofStyle(challenge.solution[locale]).codeChars;
+  const onboardingEl = root.querySelector<HTMLElement>('[data-role="challenge-onboarding"]');
+  if (onboardingEl && !isChallengeOnboarded()) {
+    onboardingEl.hidden = false;
+    onboardingEl
+      .querySelector<HTMLButtonElement>('[data-role="dismiss-onboarding"]')
+      ?.addEventListener('click', () => {
+        markChallengeOnboarded();
+        onboardingEl.hidden = true;
+      });
+  }
   const existingRecordEl = root.querySelector<HTMLElement>('[data-role="challenge-record"]');
   const resultEl = root.querySelector<HTMLElement>('[data-role="challenge-result"]');
   const resultTitleEl = root.querySelector<HTMLElement>('[data-role="result-title"]');
   const resultBadgesEl = root.querySelector<HTMLElement>('[data-role="result-badges"]');
   const resultTiersEl = root.querySelector<HTMLElement>('[data-role="result-tiers"]');
   const resultCharsEl = root.querySelector<HTMLElement>('[data-role="result-chars"]');
+  const resultNewRecordEl = root.querySelector<HTMLElement>('[data-role="result-new-record"]');
   const resultRankEl = root.querySelector<HTMLElement>('[data-role="result-rank"]');
   const copyCardStatus = root.querySelector<HTMLElement>('[data-role="result-copy-status"]');
   const nicknameInput = root.querySelector<HTMLInputElement>('[data-role="poster-nickname"]');
@@ -568,6 +623,8 @@ export const mountChallenge = async (
 
     const wasHidden = resultEl.hidden;
     const style = analyzeProofStyle(code);
+    const previousBest = store.get(challenge.slug).bestChars;
+    const isNewRecord = previousBest === null || style.codeChars < previousBest;
     const tiers = challenge.mode === 'bounty' ? solvedChallengeTiers(spec, code, diagnostics) : [];
     const record = store.recordRun(challenge.slug, {
       badges: style.badges,
@@ -594,6 +651,7 @@ export const mountChallenge = async (
       resultTiersEl.textContent = tierText.length > 0 ? t.detail.solvedTiers(tierText) : '';
     }
     if (resultCharsEl) resultCharsEl.textContent = t.detail.bestChars(best);
+    if (resultNewRecordEl) resultNewRecordEl.hidden = !isNewRecord;
     if (resultRankEl) resultRankEl.textContent = t.detail.rankLabel(rank);
     shareText = t.detail.shareText(challenge.title[locale], badgeText, best);
     resultEl.hidden = false;
@@ -611,6 +669,7 @@ export const mountChallenge = async (
     code: challenge.starter[locale],
     locale,
     draftKey: challengeDraftKey(challenge.slug),
+    hideShare: true,
     // 不在后台偷偷拉取 102MB：遵循全局自动启动设置 + 内存/省流档位守门。
     autoStart: getAutoStart() && shouldAutoStart(currentMemoryTier(), saveData === true),
     startImmediately: startRequested,

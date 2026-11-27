@@ -39,6 +39,7 @@ export type LeanPanelOptions = {
   lessonSlug?: string;
   draftKey?: string;
   ignoreDraft?: boolean;
+  hideShare?: boolean;
   onProgress?: (progress: LeanPanelProgress) => void;
   onGoal?: (goalText: string) => void;
   onDiagnostics?: (diagnostics: LspDiagnostic[]) => void;
@@ -67,6 +68,7 @@ export const createLeanPanel = (host: HTMLElement, options: LeanPanelOptions): L
     lessonSlug,
     draftKey,
     ignoreDraft = false,
+    hideShare = false,
     onProgress,
     onGoal,
     onDiagnostics,
@@ -79,7 +81,7 @@ export const createLeanPanel = (host: HTMLElement, options: LeanPanelOptions): L
     !lessonSlug &&
     host.querySelector<HTMLElement>('[data-ssr-markup]')?.dataset.ssrMarkup === variant;
   if (!hasPrerendered) {
-    host.innerHTML = renderLeanMarkup(locale, variant, t, lessonSlug);
+    host.innerHTML = renderLeanMarkup(locale, variant, t, lessonSlug, { hideShare });
   }
 
   const statusEl = host.querySelector<HTMLElement>('[data-role="status"]')!;
@@ -163,6 +165,7 @@ export const createLeanPanel = (host: HTMLElement, options: LeanPanelOptions): L
     host,
     uri: WORKSPACE_URI,
     variant,
+    locale,
     starterCode: code,
     lessonSlug,
     t,

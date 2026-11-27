@@ -8,7 +8,8 @@ import * as monaco from 'monaco-editor/editor/editor.api';
 import '../../monaco-contrib';
 import editorWorker from '../../../node_modules/monaco-editor/esm/vs/editor/editor.worker.js?worker';
 import { MAX_SHARE_CODE_BYTES, buildShareUrl } from '../../code-share';
-import { clearDraft, readDraft, saveDraft } from '../../draft';
+import { clearDraft, hashStarter, readDraft, saveDraft } from '../../draft';
+import { declarationNames } from '../../exercise';
 import type { Messages } from '../../i18n/types';
 import {
   abbreviationSuggestions,
@@ -60,7 +61,23 @@ export const createEditorBindings = (options: EditorBindingsOptions) => {
     log,
     onContentChange,
   } = options;
-  const draft = !ignoreDraft && draftKey ? readDraft(draftKey) : null;
+  const starterHash = hashStarter(starterCode);
+  let draft = !ignoreDraft && draftKey ? readDraft(draftKey, starterHash) : null;
+  // 兼容极早期无 starterHash 的残留课后草稿：若包含的定理名与当前课模板毫无交集，视为课程改版前的过期草稿并丢弃。
+  if (draft && lessonSlug && !draft.starterHash && draftKey) {
+    const expectedNames = declarationNames(starterCode);
+    const hasOverlap =
+      expectedNames.length === 0 ||
+      expectedNames.some((name) =>
+        new RegExp(
+          `(?<![A-Za-z0-9_'])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_'])`,
+        ).test(draft!.code),
+      );
+    if (!hasOverlap) {
+      clearDraft(draftKey);
+      draft = null;
+    }
+  }
   const cleanups: Array<() => void> = [];
   const disposables: monaco.IDisposable[] = [];
 
@@ -196,12 +213,12 @@ export const createEditorBindings = (options: EditorBindingsOptions) => {
   const scheduleDraftSave = () => {
     if (!draftKey) return;
     window.clearTimeout(draftTimer);
-    draftTimer = window.setTimeout(() => saveDraft(draftKey, model.getValue()), 400);
+    draftTimer = window.setTimeout(() => saveDraft(draftKey, model.getValue(), starterHash), 400);
   };
   const saveDraftNow = () => {
     if (!draftKey) return;
     window.clearTimeout(draftTimer);
-    saveDraft(draftKey, model.getValue());
+    saveDraft(draftKey, model.getValue(), starterHash);
   };
 
   disposables.push(
@@ -267,7 +284,7 @@ export const createEditorBindings = (options: EditorBindingsOptions) => {
       resetEl.dataset.armed = 'true';
       resetEl.textContent = t.resetConfirmAction;
       window.clearTimeout(resetArmTimer);
-      resetArmTimer = window.setTimeout(disarmReset, 3000);
+      resetArmTimer = window.setTimeout(disarmReset, 5000);
       return;
     }
     disarmReset();

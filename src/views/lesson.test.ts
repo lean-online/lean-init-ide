@@ -139,11 +139,20 @@ describe('课程页渲染', () => {
     expect(html).toContain(first.lead);
   });
 
-  it('目录按路径分组并包含数学课', () => {
+  it('目录按路径分组并包含数学课，标题与副标题里的反引号正确渲染为 code', () => {
     const html = renderLesson('zh', 'math-divisibility');
     expect(html).toContain(messagesFor('zh').lesson.tracks.math.title);
     expect(html).toContain('href="/zh/learn/math-sets"');
     expect(html).toContain('href="/zh/learn/math-mathlib"');
+    expect(html).toContain('<code class=');
+    expect(html).not.toContain('`2 ∣ 6`');
+
+    const boundsHtml = renderLesson('zh', 'eng-array-bounds');
+    expect(boundsHtml).not.toContain('`i &lt; arr.size`');
+    expect(boundsHtml).toContain('i &lt; arr.size</code>');
+    expect(boundsHtml).toContain('data-role="lesson-prerequisites"');
+    expect(boundsHtml).toContain('href="/zh/reference"');
+    expect(boundsHtml).toContain('data-role="progressive-hints"');
   });
 
   it('首节没有上一篇，末节没有下一篇', () => {
@@ -305,7 +314,7 @@ describe('课程页交互绑定', () => {
     first.click();
     const output = document.body.querySelector<HTMLElement>('[data-output="0"]')!;
     expect(output.hidden).toBe(false);
-    expect(output.textContent).toContain('加载运行时…');
+    expect(output.textContent).toContain(messagesFor('zh').playground.statusLoading);
     expect(first.disabled).toBe(true);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -391,7 +400,7 @@ describe('课程页交互绑定', () => {
 
     const output = document.body.querySelector<HTMLElement>('[data-output="0"]')!;
     expect(output.querySelector('[data-role="run-progress"]')).not.toBeNull();
-    expect(output.textContent).toContain('加载运行时…');
+    expect(output.textContent).toContain(messagesFor('zh').playground.statusLoading);
     expect(output.textContent).toContain('0.0s');
     expect(button.disabled).toBe(true);
     expect(

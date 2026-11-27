@@ -88,7 +88,22 @@ describe('createDiagnosticsView', () => {
     expect(onQuickFixLibrary).toHaveBeenCalledWith('std');
     expect(fixBtn.disabled).toBe(true);
 
+    // 命中常见新手错误时，在原生英文报错上方渲染中文新手提示层。
+    code = 'example : 2 ∣ 6 := by\n  exact (3, rfl)';
+    view.renderDiagnostics({
+      uri: URI,
+      diagnostics: [
+        {
+          severity: 1,
+          message: 'unsolved goals\n⊢ ∃ k, 6 = 2 * k',
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+        },
+      ],
+    });
+    expect(host.querySelector('[data-role="diagnostic-hint"]')?.textContent).toContain('尖括号');
+
     // 清零诊断后等待 200ms 屏障 + 150ms 静默窗，亮起运行通过横幅和通关徽章。
+    code = 'theorem t : True := trivial';
     view.renderDiagnostics({ uri: URI, diagnostics: [] });
     expect(host.querySelector<HTMLElement>('[data-role="passed"]')!.hidden).toBe(false);
     await vi.advanceTimersByTimeAsync(200);

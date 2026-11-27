@@ -4,7 +4,9 @@
  */
 import type { LeanRuntimeArch } from '../../device';
 import { isExerciseSolved, isExerciseStarter } from '../../exercise';
+import type { Locale } from '../../i18n';
 import type { Messages } from '../../i18n/types';
+import { explainDiagnostic } from '../../lean-diagnostic-hints';
 import {
   computeDiagnosticsLatencyMs,
   isAssetRelatedError,
@@ -30,6 +32,7 @@ export type DiagnosticsViewOptions = {
   readonly host: HTMLElement;
   readonly uri: string;
   readonly variant: LeanPanelVariant;
+  readonly locale?: Locale;
   readonly starterCode: string;
   readonly lessonSlug?: string;
   readonly t: Messages['playground'];
@@ -64,7 +67,7 @@ const makeEl = <K extends keyof HTMLElementTagNameMap>(
 };
 
 export const createDiagnosticsView = (options: DiagnosticsViewOptions) => {
-  const { uri, variant, starterCode, lessonSlug, t, getCode } = options;
+  const { uri, variant, locale = 'zh', starterCode, lessonSlug, t, getCode } = options;
   const trackEvent = options.trackEvent ?? track;
   const perfNow = options.perfNow ?? (() => performance.now());
   const byRole = <T extends HTMLElement>(role: string) =>
@@ -274,8 +277,19 @@ export const createDiagnosticsView = (options: DiagnosticsViewOptions) => {
       return;
     }
 
+    const currentCode = getCode();
     for (const diagnostic of diagnostics) {
       const item = makeEl('li', 'mb-1.5');
+      const beginnerHint = explainDiagnostic(diagnostic, currentCode, locale);
+      if (beginnerHint) {
+        const hintEl = makeEl(
+          'p',
+          'm-0 mb-1 rounded-md border border-accent/30 bg-accent-soft px-2.5 py-1.5 text-xs leading-relaxed text-fg',
+          `💡 ${beginnerHint}`,
+        );
+        hintEl.dataset.role = 'diagnostic-hint';
+        item.append(hintEl);
+      }
       const button = makeEl('button', diagnosticClass);
       button.type = 'button';
       const sev = diagnostic.severity;

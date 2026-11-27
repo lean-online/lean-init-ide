@@ -37,29 +37,74 @@ const CJK_CHAR = /[\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f]/;
 
 const charUnits = (ch: string): number => (CJK_CHAR.test(ch) ? 2 : 1);
 
-/** 按视觉宽度的近似单位分行（中文 2 单位、ASCII 1 单位），避免海报标题裁剪溢出。 */
+const tokenUnits = (token: string): number => {
+  let sum = 0;
+  for (const ch of [...token]) sum += charUnits(ch);
+  return sum;
+};
+
+/**
+ * 按视觉宽度与单词边界分行（中文每字 2 单位、ASCII 单词整体换行），
+ * 避免英文术语（如 `omega`、`constructor`）在行尾被截断成 `o` + `mega`。
+ */
 export const wrapPosterText = (text: string, maxUnits: number, maxLines = 3): string[] => {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (!clean) return ['—'];
   const limit = Math.max(4, Math.floor(maxUnits));
+  const tokens =
+    clean.match(
+      /\s+|[^\s\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f]+|[\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f]/g,
+    ) ?? [];
   const lines: string[] = [];
   let current = '';
   let units = 0;
 
-  for (const ch of [...clean]) {
-    const w = charUnits(ch);
-    if (units + w > limit && current.length > 0) {
-      lines.push(current.trimEnd());
-      if (lines.length >= maxLines) {
-        const last = lines[maxLines - 1]!;
-        lines[maxLines - 1] = `${last.slice(0, Math.max(1, last.length - 1))}…`;
-        return lines;
+  const pushOverflow = (nextLine: string): boolean => {
+    lines.push(current.trimEnd());
+    if (lines.length >= maxLines) {
+      const last = lines[maxLines - 1]!.trimEnd();
+      lines[maxLines - 1] = `${last.slice(0, Math.max(1, last.length - 1))}…`;
+      return true;
+    }
+    current = nextLine;
+    units = tokenUnits(nextLine);
+    return false;
+  };
+
+  for (const token of tokens) {
+    const isSpace = /^\s+$/.test(token);
+    if (isSpace) {
+      if (current.length === 0) continue;
+      if (units + 1 > limit) {
+        if (pushOverflow('')) return lines;
+      } else {
+        current += ' ';
+        units += 1;
       }
-      current = ch === ' ' ? '' : ch;
-      units = ch === ' ' ? 0 : w;
-    } else {
-      current += ch;
+      continue;
+    }
+
+    const w = tokenUnits(token);
+    if (units + w <= limit) {
+      current += token;
       units += w;
+      continue;
+    }
+
+    if (current.length > 0 && w <= limit) {
+      if (pushOverflow(token)) return lines;
+      continue;
+    }
+
+    // 超长单个连续英文串超过整行上限时，再按字符拆行。
+    for (const ch of [...token]) {
+      const cw = charUnits(ch);
+      if (units + cw > limit && current.length > 0) {
+        if (pushOverflow(ch)) return lines;
+      } else {
+        current += ch;
+        units += cw;
+      }
     }
   }
   if (current.trim()) lines.push(current.trim());

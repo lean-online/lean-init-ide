@@ -14,7 +14,8 @@ const computeHomeState = (
   const lessonMsgs = messagesFor(locale).lesson;
   const lessonSlugs = LESSON_CATALOG.map((lesson) => lesson.slug);
   const target = firstUncompletedLesson(lessonSlugs, completed) ?? FIRST_LESSON_SLUG;
-  const cta = visited.size > 0 || completed.size > 0 ? t.continueCta : t.ctaPrimary;
+  const targetIndex = Math.max(0, lessonSlugs.indexOf(target)) + 1;
+  const cta = visited.size > 0 || completed.size > 0 ? t.continueCta(targetIndex) : t.ctaPrimary;
 
   const introLessons = LESSON_CATALOG.filter((lesson) => lesson.track === 'intro');
   const mathLessons = LESSON_CATALOG.filter((lesson) => lesson.track === 'math');
@@ -133,9 +134,18 @@ export const renderHome = (
         <a class="inline-flex min-h-7 items-center text-accent no-underline hover:underline" href="${REPO_URL}" target="_blank" rel="noreferrer">${escapeHtml(t.factsRepo)}</a>
       </p>
       <div class="flex flex-wrap gap-3">
-        <a class="${buttonClass}" data-home-cta="primary" href="/${locale}/learn/${target}">${cta}</a>
-        <a class="${ghostButtonLgClass} border-warn/45 bg-warn/10 text-fg hover:border-warn" data-home-cta="hero-challenges" href="/${locale}/challenges">${escapeHtml(t.ctaArcade)}</a>
-        <a class="${ghostButtonLgClass}" href="/${locale}/playground">${t.ctaSecondary}</a>
+        <a class="${buttonClass} h-auto flex-col items-start gap-0.5 py-2.5 leading-tight" data-home-cta="hero-challenges" href="/${locale}/challenges">
+          <span>${escapeHtml(t.ctaArcade)}</span>
+          <span class="text-[11px] font-normal opacity-85">${escapeHtml(t.ctaArcadeSub)}</span>
+        </a>
+        <a class="${ghostButtonLgClass} h-auto flex-col items-start gap-0.5 border-accent/45 bg-accent-soft py-2.5 leading-tight text-fg hover:border-accent" data-home-cta="primary" href="/${locale}/learn/${target}">
+          <span data-home-cta-label>${escapeHtml(cta)}</span>
+          <span class="text-[11px] font-normal text-muted">${escapeHtml(t.ctaPrimarySub)}</span>
+        </a>
+        <a class="${ghostButtonLgClass} h-auto flex-col items-start gap-0.5 py-2.5 leading-tight" href="/${locale}/playground">
+          <span>${escapeHtml(t.ctaSecondary)}</span>
+          <span class="text-[11px] font-normal text-muted">${escapeHtml(t.ctaSecondarySub)}</span>
+        </a>
       </div>
     </section>
 
@@ -159,7 +169,10 @@ export const renderHome = (
     </section>
 
     <section class="mt-[clamp(40px,6vw,72px)]">
-      <h2 class="mt-0 mb-4.5 text-sm uppercase tracking-[0.08em] text-muted">${t.featuresTitle}</h2>
+      <div class="mb-4.5 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="m-0 text-sm uppercase tracking-[0.08em] text-muted">${t.featuresTitle}</h2>
+        <p class="m-0 font-mono text-xs text-muted">${escapeHtml(t.featuresLead)}</p>
+      </div>
       <div class="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-3.5">${features}</div>
     </section>
 
@@ -187,7 +200,9 @@ export const hydrateHome = (
   const primary = root.querySelector<HTMLAnchorElement>('[data-home-cta="primary"]');
   if (primary) {
     primary.href = `/${locale}/learn/${target}`;
-    primary.textContent = cta;
+    const label = primary.querySelector<HTMLElement>('[data-home-cta-label]');
+    if (label) label.textContent = cta;
+    else primary.textContent = cta;
   }
   const intro = root.querySelector<HTMLAnchorElement>('[data-home-cta="intro"]');
   if (intro) intro.href = `/${locale}/learn/${introTarget}`;

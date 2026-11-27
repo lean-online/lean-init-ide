@@ -83,6 +83,14 @@ describe('playground 页面', () => {
     expect(notice.textContent).toContain('nat_add_zero');
     expect(notice.textContent).toContain('return_given');
 
+    // 第 26 课标题中的反引号正确渲染为 <code>，并渲染渐进式分层提示。
+    history.replaceState(null, '', '/zh/playground?lesson=eng-array-bounds');
+    document.body.innerHTML = renderPlayground('zh');
+    await mountPlayground(document.body, 'zh');
+    const boundsNotice = document.body.querySelector<HTMLElement>('[data-role="lesson-notice"]')!;
+    expect(boundsNotice.innerHTML).toContain('i &lt; arr.size</code>');
+    expect(boundsNotice.querySelector('[data-role="progressive-hints"]')).not.toBeNull();
+
     history.replaceState(null, '', '/zh/playground');
     document.body.innerHTML = renderPlayground('zh');
     await mountPlayground(document.body, 'zh');
