@@ -448,6 +448,8 @@ end
     libraryLoaded: 'Loaded',
     libraryRelease: 'Release',
     libraryReleaseAll: 'Release all',
+    libraryRequiredBy: (dependents) =>
+      `Required by ${dependents}; release ${dependents} first or use "Release all"`,
     libraryRestarting: 'Restarting Lean…',
     libraryError: (message) => `Failed to load library: ${message}`,
     expand: 'Expand',

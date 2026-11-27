@@ -431,6 +431,8 @@ export type Messages = {
     libraryRelease: string;
     /** 一次释放所有已挂载的扩展库。 */
     libraryReleaseAll: string;
+    /** 当前库正被其它已加载库依赖时的提示，禁止悄悄连带全放。 */
+    libraryRequiredBy: (dependents: string) => string;
     libraryRestarting: string;
     libraryError: (message: string) => string;
     expand: string;

@@ -2,6 +2,7 @@ import runtimeManifest from '../config/lean4-runtime.json';
 import wasm64RuntimeManifest from '../config/lean4-wasm64-runtime.json';
 import { assetSources } from './asset-sources.mjs';
 import { openOpfsPackStore, type OpfsPackRef, type OpfsStorageLike } from './opfs-pack-store';
+import { downloadRanges, downloadStream } from './sw-download';
 
 /**
  * 扩展库（Std / Batteries / Mathlib）的按需下载与 OPFS 持久化：
@@ -18,6 +19,9 @@ type ExtensionAsset = {
   bytes: number;
   sha256: string;
   contentType: string;
+  encoding?: string;
+  uncompressedBytes?: number;
+  uncompressedSha256?: string;
 };
 
 export type RuntimeArch = 'wasm32' | 'wasm64';
@@ -36,8 +40,8 @@ export type RuntimeExtension = {
 type PackIndex = {
   chunks: Array<{
     path: string;
-    uncompressedBytes: number;
-    uncompressedSha256: string;
+    uncompressedBytes?: number;
+    uncompressedSha256?: string;
   }>;
 };
 
@@ -45,7 +49,10 @@ export type ExtensionPackValue = ArrayBufferLike | OpfsPackRef;
 
 export type ExtensionPacks = Record<string, ExtensionPackValue>;
 
-type Manifest = Parameters<typeof assetSources>[0] & { extensions?: RuntimeExtension[] };
+type Manifest = Parameters<typeof assetSources>[0] & {
+  cacheKey?: string;
+  extensions?: RuntimeExtension[];
+};
 
 const wasm32Manifest = runtimeManifest as unknown as Manifest;
 const wasm64Manifest = wasm64RuntimeManifest as unknown as Manifest;
@@ -119,31 +126,97 @@ const toSharedBuffer = (bytes: Uint8Array): SharedArrayBuffer => {
   return shared.buffer;
 };
 
-const fetchAsset = async (asset: ExtensionAsset, manifest: Manifest) => {
+const RANGE_THRESHOLD_BYTES = 2 * 1024 * 1024;
+const EXTENSION_CHUNK_BYTES = 2 * 1024 * 1024;
+
+const mergeParts = (parts: readonly ArrayBuffer[], expectedBytes: number): Uint8Array => {
+  if (parts.length === 1 && parts[0]!.byteLength === expectedBytes) {
+    return new Uint8Array(parts[0]!);
+  }
+  const combined = new Uint8Array(expectedBytes);
+  let offset = 0;
+  for (const part of parts) {
+    if (offset + part.byteLength > expectedBytes) {
+      throw new Error(`chunk overflow: ${offset + part.byteLength} > ${expectedBytes}`);
+    }
+    combined.set(new Uint8Array(part), offset);
+    offset += part.byteLength;
+  }
+  if (offset !== expectedBytes) {
+    throw new Error(`${offset} bytes`);
+  }
+  return combined;
+};
+
+const withContentHash = (url: string, sha256: string): string => {
+  const hash = sha256.slice(0, 12);
+  if (!hash) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}h=${hash}`;
+};
+
+const fetchAsset = async (
+  asset: ExtensionAsset,
+  manifest: Manifest,
+  onChunkProgress?: (loaded: number) => void,
+  fetchImpl?: typeof fetch,
+): Promise<Uint8Array> => {
   // 扩展包只发布在 R2/魔搭：用 zstd 标记跳过 GitHub Release 回退。
-  const sources = assetSources(manifest, { ...asset, encoding: 'zstd' }, undefined, {
+  const resolved = assetSources(manifest, { ...asset, encoding: 'zstd' }, undefined, {
     includeMirror: true,
   }).filter((source) => source.url.startsWith('/') || /^https?:/i.test(source.url));
+  const sources = resolved.map((source) =>
+    source.url.startsWith(`/cdn/${asset.key}`)
+      ? { ...source, url: withContentHash(source.url, asset.sha256) }
+      : source,
+  );
+  let primaryError: unknown;
   let lastError: unknown;
   for (const source of sources) {
+    const controller = new AbortController();
+    const isSameOrigin = source.url.startsWith('/');
     try {
-      const response = await fetch(source.url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const bytes = await response.arrayBuffer();
-      if (bytes.byteLength !== asset.bytes) throw new Error(`${bytes.byteLength} bytes`);
-      if ((await sha256Hex(bytes)) !== asset.sha256) throw new Error('sha256 mismatch');
+      const parts =
+        isSameOrigin && asset.bytes > RANGE_THRESHOLD_BYTES
+          ? await downloadRanges({
+              url: source.url,
+              total: asset.bytes,
+              chunkBytes: EXTENSION_CHUNK_BYTES,
+              parallel: 3,
+              timeoutMs: 45_000,
+              retries: 3,
+              minSplitBytes: 512 * 1024,
+              maxSplitDepth: 2,
+              signal: controller.signal,
+              onProgress: (progress) => onChunkProgress?.(progress.loaded),
+              ...(fetchImpl ? { fetchImpl } : {}),
+            })
+          : await downloadStream({
+              url: source.url,
+              total: asset.bytes,
+              timeoutMs: isSameOrigin ? 30_000 : 20_000,
+              retries: isSameOrigin ? 3 : 1,
+              signal: controller.signal,
+              onProgress: (progress) => onChunkProgress?.(progress.loaded),
+              ...(fetchImpl ? { fetchImpl } : {}),
+            });
+      const bytes = mergeParts(parts, asset.bytes);
+      if ((await sha256Hex(bytes as BufferSource)) !== asset.sha256) {
+        throw new Error('sha256 mismatch');
+      }
       return bytes;
     } catch (error) {
+      if (isSameOrigin && primaryError === undefined) primaryError = error;
       lastError = error;
     }
   }
-  throw new Error(
-    `${asset.name} 下载失败：${lastError instanceof Error ? lastError.message : lastError}`,
-  );
+  const detail = primaryError ?? lastError;
+  throw new Error(`${asset.name} 下载失败：${detail instanceof Error ? detail.message : detail}`);
 };
 
 export type LoadExtensionOptions = {
   readonly opfsStorage?: OpfsStorageLike;
+  readonly fetchImpl?: typeof fetch;
+  readonly createDecoder?: () => Promise<ZstdDecoder>;
 };
 
 /**
@@ -178,29 +251,43 @@ export const loadExtensionPacks = async (
   const packs: ExtensionPacks = {};
   let loaded = 0;
   const state: { decoder?: ZstdDecoder } = {};
+  const reportChunkProgress = (label: string, chunkLoaded: number) => {
+    if (total === 0) return;
+    onProgress?.(Math.min(1, (loaded + chunkLoaded) / total), label);
+  };
   try {
     for (const extension of selected) {
       onProgress?.(total === 0 ? 0 : loaded / total, extension.label);
       const indexAsset = extension.assets.find((asset) => asset.name.endsWith('.index.json'));
       if (!indexAsset) throw new Error(`${extension.label} 缺少索引资产`);
       const index = await (async () => {
-        const indexBytes = await fetchAsset(indexAsset, manifest);
+        const indexBytes = await fetchAsset(
+          indexAsset,
+          manifest,
+          (chunkLoaded) => reportChunkProgress(extension.label, chunkLoaded),
+          options?.fetchImpl,
+        );
         loaded += indexAsset.bytes;
-        packs[indexAsset.name] = toSharedBuffer(new Uint8Array(indexBytes));
+        onProgress?.(total === 0 ? 0 : loaded / total, extension.label);
+        packs[indexAsset.name] = toSharedBuffer(indexBytes);
         return JSON.parse(new TextDecoder().decode(indexBytes)) as PackIndex;
       })();
 
       for (const chunk of index.chunks) {
-        const asset = extension.assets.find((item) => item.name === chunk.path);
+        // wasm64 索引里的 path 为 `*.pack.zst`，而 CDN/OPFS 清单资产名为 `*.pack.zst.bin`，两种都匹配。
+        const asset = extension.assets.find(
+          (item) => item.name === chunk.path || item.name === `${chunk.path}.bin`,
+        );
         if (!asset) throw new Error(`${extension.label} 缺少分片 ${chunk.path}`);
+        const expectedBytes = chunk.uncompressedBytes ?? asset.uncompressedBytes;
+        const expectedSha256 = chunk.uncompressedSha256 ?? asset.uncompressedSha256;
+        if (expectedBytes === undefined || !expectedSha256) {
+          throw new Error(`${extension.label} 分片 ${chunk.path} 缺少解压校验信息`);
+        }
         const logicalName = chunk.path.replace(/\.(gz|zst)(\.bin)?$/, '');
 
         if (opfsStore) {
-          const hit = await opfsStore.has(
-            logicalName,
-            chunk.uncompressedSha256,
-            chunk.uncompressedBytes,
-          );
+          const hit = await opfsStore.has(logicalName, expectedSha256, expectedBytes);
           if (hit) {
             loaded += asset.bytes;
             onProgress?.(total === 0 ? 0 : loaded / total, extension.label);
@@ -209,31 +296,35 @@ export const loadExtensionPacks = async (
           }
         }
 
-        const decoder = state.decoder ?? (state.decoder = await createDecoder());
+        const decoder =
+          state.decoder ?? (state.decoder = await (options?.createDecoder ?? createDecoder)());
         // 独立异步块确保解压完成立刻释放 compressed，计算 SHA-256 与落盘期不再双重占内存。
         const raw = await (async () => {
-          const compressed = await fetchAsset(asset, manifest);
+          const compressed = await fetchAsset(
+            asset,
+            manifest,
+            (chunkLoaded) => reportChunkProgress(extension.label, chunkLoaded),
+            options?.fetchImpl,
+          );
           loaded += asset.bytes;
           onProgress?.(total === 0 ? 0 : loaded / total, extension.label);
-          return decoder.decode(new Uint8Array(compressed), chunk.uncompressedBytes);
+          return decoder.decode(compressed, expectedBytes);
         })();
-        if (raw.byteLength !== chunk.uncompressedBytes) {
-          throw new Error(
-            `${chunk.path} 解压后 ${raw.byteLength} 字节，期望 ${chunk.uncompressedBytes}`,
-          );
+        if (raw.byteLength !== expectedBytes) {
+          throw new Error(`${chunk.path} 解压后 ${raw.byteLength} 字节，期望 ${expectedBytes}`);
         }
         // 只对视图切片做 SHA-256，防止 zstddec 返回内部堆 subarray 时 hash 到整块底层 buffer。
         const hashInput =
           raw.byteOffset === 0 && raw.byteLength === raw.buffer.byteLength
             ? raw
             : new Uint8Array(raw);
-        if ((await sha256Hex(hashInput as BufferSource)) !== chunk.uncompressedSha256) {
+        if ((await sha256Hex(hashInput as BufferSource)) !== expectedSha256) {
           throw new Error(`${chunk.path} 解压后 SHA-256 不一致`);
         }
 
         if (opfsStore) {
           try {
-            packs[logicalName] = await opfsStore.write(logicalName, chunk.uncompressedSha256, raw);
+            packs[logicalName] = await opfsStore.write(logicalName, expectedSha256, raw);
             continue;
           } catch {
             // OPFS 写入失败时自动退回 SharedArrayBuffer。

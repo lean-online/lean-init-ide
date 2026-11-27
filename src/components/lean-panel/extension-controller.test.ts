@@ -184,6 +184,32 @@ describe('createExtensionController', () => {
     host.querySelector<HTMLButtonElement>('[data-library="std"]')!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(controller.getActiveExtensions()).toEqual([]);
+
+    // 单个小释放按钮语义：仅释放被点击的库；被 Batteries 依赖时 Std 按钮锁定且不悄悄连带释放全部。
+    failLoad = false;
+    const batBtn = host.querySelector<HTMLButtonElement>('[data-library="batteries"]')!;
+    const stdBtn = host.querySelector<HTMLButtonElement>('[data-library="std"]')!;
+    batBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(controller.getActiveExtensions().sort()).toEqual(['batteries', 'std']);
+    expect(stdBtn.disabled).toBe(true);
+    expect(stdBtn.title).toContain('Batteries');
+    // 即使通过 JS 强制派发点击，也不能误释放 Batteries 或 Std。
+    stdBtn.dispatchEvent(new MouseEvent('click'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(controller.getActiveExtensions().sort()).toEqual(['batteries', 'std']);
+
+    // 先点 Batteries 的小释放按钮：只释放 Batteries，Std 继续保持加载并自动解锁。
+    batBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(controller.getActiveExtensions()).toEqual(['std']);
+    expect(stdBtn.disabled).toBe(false);
+    expect(stdBtn.title).toBe('');
+
+    // 再点 Std 的小释放按钮：释放 Std。
+    stdBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(controller.getActiveExtensions()).toEqual([]);
   });
 
   it('wasm64 已发布对应扩展时保留 wasm64 架构并在 quick-fix 中不误回退 wasm32', async () => {
