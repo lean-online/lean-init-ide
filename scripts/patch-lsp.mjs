@@ -264,8 +264,9 @@ applyPatch(
   `            initOptions: {
                 baseUrl: config.baseUrl,
                 maxMemoryBytes,
-                extensionPacks: host?.lean4?.extensionPacks,`,
-  'forward extensionPacks to worker',
+                extensionPacks: host?.lean4?.extensionPacks,
+                extensionOpfsPacks: host?.lean4?.extensionOpfsPacks,`,
+  'forward extensionPacks and extensionOpfsPacks to worker',
 );
 
 applyPatch(
@@ -281,8 +282,367 @@ applyPatch(
         maxMemoryBytes?: number;
         /** Extra verified library packs (logicalName -> compressed bytes) mounted with Init. */
         extensionPacks?: Record<string, ArrayBufferLike>;
+        /** OPFS pack references mounted lazily without SharedArrayBuffer copies. */
+        extensionOpfsPacks?: Record<string, { __opfsPack: true; dir: string; fileName: string; bytes: number }>;
     };`,
-  'extensionPacks option type',
+  'extensionPacks and extensionOpfsPacks option types',
+);
+
+/**
+ * 6. 双端内存优化（wasm32 Worker + RuntimeWorker OPFS 懒挂载 & 释放生命周期）：
+ *    - worker.js:
+ *      1) --server 引导进程不接收 library（节省对象传递与持有）；
+ *      2) shutdown / fail 时立刻置空 library / wasmModule / glueText 释放几百 MB 引用；
+ *      3) Init 的 .pack 分片优先经 SyncAccessHandle 写入 OPFS `lean-packs-v1/wasm32`
+ *         并仅在 library 中登记轻量 OpfsPackRef（不可用时自动退回 SharedArrayBuffer）；
+ *      4) 合并透传 data.options.extensionOpfsPacks。
+ *    - runtime-worker.js:
+ *      1) 检测到 __opfsPack 条目时，使用 FileSystemSyncAccessHandle 挂载 0 字节懒读 MEMFS 节点，
+ *         仅在 Lean read()/mmap() 时按段同步读取，并在 exit/error 时关闭全部句柄；
+ *      2) 挂载完成立刻置空 data.library，避免 callMain 闭包长期 pinned。
+ */
+applyPatch(
+  leanWorker,
+  `    worker.postMessage({
+        args,
+        stdin: stdin.descriptor,
+        library,
+        wasmModule,
+        glueUrl,
+        maxMemoryBytes
+    });`,
+  `    const isBootstrap = Array.isArray(args) && args.includes('--server');
+    worker.postMessage({
+        args,
+        stdin: stdin.descriptor,
+        library: isBootstrap ? null : library,
+        wasmModule,
+        glueUrl,
+        maxMemoryBytes
+    });`,
+  'worker skip library payload for bootstrap',
+);
+
+applyPatch(
+  leanWorker,
+  `        case 'shutdown':
+            generation++;
+            fileProcess?.dispose();
+            bootstrap?.dispose();
+            fileProcess = bootstrap = undefined;`,
+  `        case 'shutdown':
+            generation++;
+            fileProcess?.dispose();
+            bootstrap?.dispose();
+            fileProcess = bootstrap = undefined;
+            library = wasmModule = undefined;
+            glueText = '';`,
+  'worker release library and wasm on shutdown',
+);
+
+applyPatch(
+  leanWorker,
+  `    bootstrap?.dispose();
+    fileProcess?.dispose();
+    bootstrap = fileProcess = undefined;`,
+  `    bootstrap?.dispose();
+    fileProcess?.dispose();
+    bootstrap = fileProcess = undefined;
+    library = wasmModule = undefined;
+    glueText = '';`,
+  'worker release library and wasm on fail',
+);
+
+applyPatch(
+  leanWorker,
+  `    library = {};
+    for (const [name, receipt] of Object.entries(profile.assets)) {`,
+  `    library = {};
+    let opfsInitDir;
+    try {
+        if (navigator?.storage?.getDirectory) {
+            const root = await navigator.storage.getDirectory();
+            const packRoot = await root.getDirectoryHandle('lean-packs-v1', { create: true });
+            opfsInitDir = await packRoot.getDirectoryHandle('wasm32', { create: true });
+        }
+    } catch {
+        opfsInitDir = undefined;
+    }
+    for (const [name, receipt] of Object.entries(profile.assets)) {`,
+  'worker open OPFS wasm32 pack dir',
+);
+
+applyPatch(
+  leanWorker,
+  `        else if (name === 'lean-init.index.json' || logicalName.endsWith('.pack')) {
+            const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+            shared.set(bytes);
+            library[logicalName] = shared;
+        }`,
+  `        else if (name === 'lean-init.index.json' || logicalName.endsWith('.pack')) {
+            let storedInOpfs = false;
+            if (opfsInitDir && logicalName.endsWith('.pack')) {
+                try {
+                    const hashTag = (receipt.uncompressed?.sha256 ?? receipt.sha256).slice(0, 16);
+                    const fileName = \`\${logicalName.replace(/[^A-Za-z0-9._-]/g, '_')}.\${hashTag}.bin\`;
+                    const fh = await opfsInitDir.getFileHandle(fileName, { create: true });
+                    if (typeof fh.createSyncAccessHandle === 'function') {
+                        const sh = await fh.createSyncAccessHandle();
+                        try {
+                            if (sh.getSize() !== bytes.length) {
+                                sh.truncate(0);
+                                const view = new Uint8Array(bytes);
+                                let off = 0;
+                                while (off < view.length) off += sh.write(view.subarray(off), { at: off });
+                                sh.flush();
+                            }
+                        } finally {
+                            sh.close();
+                        }
+                        library[logicalName] = { __opfsPack: true, dir: 'wasm32', fileName, bytes: bytes.length };
+                        storedInOpfs = true;
+                    }
+                } catch {
+                    storedInOpfs = false;
+                }
+            }
+            if (!storedInOpfs) {
+                const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+                shared.set(bytes);
+                library[logicalName] = shared;
+            }
+        }`,
+  'worker persist wasm32 packs to OPFS when supported',
+);
+
+applyPatch(
+  leanWorker,
+  `    for (const [name, buffer] of Object.entries(data.options.extensionPacks ?? {})) {
+        if (typeof SharedArrayBuffer === 'function' && buffer instanceof SharedArrayBuffer) {
+            library[name] = new Uint8Array(buffer);
+        } else {
+            const bytes = new Uint8Array(buffer);
+            const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+            shared.set(bytes);
+            library[name] = shared;
+        }
+    }`,
+  `    for (const [name, buffer] of Object.entries(data.options.extensionPacks ?? {})) {
+        if (typeof SharedArrayBuffer === 'function' && buffer instanceof SharedArrayBuffer) {
+            library[name] = new Uint8Array(buffer);
+        } else {
+            const bytes = new Uint8Array(buffer);
+            const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+            shared.set(bytes);
+            library[name] = shared;
+        }
+    }
+    for (const [name, ref] of Object.entries(data.options.extensionOpfsPacks ?? {})) {
+        if (ref && ref.__opfsPack === true)
+            library[name] = ref;
+    }`,
+  'worker accept extensionOpfsPacks references',
+);
+
+applyPatch(
+  path.join('lean4', 'runtime-worker.js'),
+  `\ttry {
+\t\tlet exited = false;
+\t\tconst onExit = (code) => {
+\t\t\tif (!exited) {
+\t\t\t\texited = true;
+\t\t\t\tself.postMessage({ exit: code });
+\t\t\t}
+\t\t};`,
+  `\tconst openedReaders = [];
+\tconst closeReaders = () => {
+\t\tfor (const reader of openedReaders) {
+\t\t\ttry { reader.close(); } catch {}
+\t\t}
+\t\topenedReaders.length = 0;
+\t};
+\ttry {
+\t\tlet exited = false;
+\t\tconst onExit = (code) => {
+\t\t\tcloseReaders();
+\t\t\tif (!exited) {
+\t\t\t\texited = true;
+\t\t\t\tself.postMessage({ exit: code });
+\t\t\t}
+\t\t};`,
+  'runtime-worker track and close OPFS handles on exit',
+);
+
+applyPatch(
+  path.join('lean4', 'runtime-worker.js'),
+  `\t\tconst isServerBootstrap = Array.isArray(data.args) && data.args.includes('--server');
+\t\tfor (const file of (isServerBootstrap ? [] : unpackLibrary(data.library))) {
+\t\t\tconst path = LIBRARY_ROOT + '/' + file.path;
+\t\t\tlean.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+\t\t\t// Copy into this process: a document's #eval must never modify the shared source pack.
+\t\t\tlean.FS.writeFile(path, file.bytes, { canOwn: true });
+\t\t}`,
+  `\t\tconst isServerBootstrap = Array.isArray(data.args) && data.args.includes('--server');
+\t\tconst hasOpfsPacks = !isServerBootstrap && data.library && Object.values(data.library).some((v) => v && v.__opfsPack === true);
+\t\tif (hasOpfsPacks) {
+\t\t\tconst root = await navigator.storage.getDirectory();
+\t\t\tconst packRoot = await root.getDirectoryHandle('lean-packs-v1');
+\t\t\tconst readerCache = new Map();
+\t\t\tconst openSync = async (ref) => {
+\t\t\t\tconst cacheKey = ref.dir + '/' + ref.fileName;
+\t\t\t\tif (readerCache.has(cacheKey)) return readerCache.get(cacheKey);
+\t\t\t\tconst dirH = await packRoot.getDirectoryHandle(ref.dir);
+\t\t\t\tconst fileH = await dirH.getFileHandle(ref.fileName);
+\t\t\t\tconst openOnce = async () => {
+\t\t\t\t\ttry { return await fileH.createSyncAccessHandle({ mode: 'read-only' }); }
+\t\t\t\t\tcatch (e) { if (e instanceof TypeError || e?.name === 'NotSupportedError') return await fileH.createSyncAccessHandle(); throw e; }
+\t\t\t\t};
+\t\t\t\tconst delays = [20, 40, 80, 160, 320];
+\t\t\t\tlet reader;
+\t\t\t\tfor (let attempt = 0; ; attempt++) {
+\t\t\t\t\ttry { reader = await openOnce(); break; }
+\t\t\t\t\tcatch (e) {
+\t\t\t\t\t\tif (e?.name === 'NoModificationAllowedError' && attempt < delays.length) {
+\t\t\t\t\t\t\tawait new Promise((r) => setTimeout(r, delays[attempt]));
+\t\t\t\t\t\t\tcontinue;
+\t\t\t\t\t\t}
+\t\t\t\t\t\tthrow e;
+\t\t\t\t\t}
+\t\t\t\t}
+\t\t\t\treaderCache.set(cacheKey, reader);
+\t\t\t\topenedReaders.push(reader);
+\t\t\t\treturn reader;
+\t\t\t};
+\t\t\tconst readSegs = (segs, pos, dst, dstOff, len, scratch) => {
+\t\t\t\tlet segStart = 0, totalRead = 0;
+\t\t\t\tconst isShared = typeof SharedArrayBuffer === 'function' && dst.buffer instanceof SharedArrayBuffer;
+\t\t\t\tfor (const seg of segs) {
+\t\t\t\t\tconst segEnd = segStart + seg.byteLength;
+\t\t\t\t\tconst rs = Math.max(pos, segStart), re = Math.min(pos + len, segEnd);
+\t\t\t\t\tif (rs < re) {
+\t\t\t\t\t\tconst need = re - rs, atBase = seg.fileOffset + (rs - segStart), outBase = dstOff + (rs - pos);
+\t\t\t\t\t\tlet done = 0;
+\t\t\t\t\t\twhile (done < need) {
+\t\t\t\t\t\t\tif (isShared) {
+\t\t\t\t\t\t\t\tconst step = Math.min(need - done, scratch.byteLength);
+\t\t\t\t\t\t\t\tconst n = seg.reader.read(scratch.subarray(0, step), { at: atBase + done });
+\t\t\t\t\t\t\t\tif (n <= 0) break;
+\t\t\t\t\t\t\t\tdst.set(scratch.subarray(0, n), outBase + done);
+\t\t\t\t\t\t\t\tdone += n;
+\t\t\t\t\t\t\t} else {
+\t\t\t\t\t\t\t\tconst n = seg.reader.read(dst.subarray(outBase + done, outBase + need), { at: atBase + done });
+\t\t\t\t\t\t\t\tif (n <= 0) break;
+\t\t\t\t\t\t\t\tdone += n;
+\t\t\t\t\t\t\t}
+\t\t\t\t\t\t}
+\t\t\t\t\t\ttotalRead += done;
+\t\t\t\t\t\tif (done < need) break;
+\t\t\t\t\t}
+\t\t\t\t\tsegStart = segEnd;
+\t\t\t\t}
+\t\t\t\treturn totalRead;
+\t\t\t};
+\t\t\tconst opsCache = new WeakMap();
+\t\t\tconst empty = new Uint8Array(0);
+\t\t\tconst createdDirs = new Set();
+\t\t\tconst indexPaths = Object.keys(data.library).filter((n) => n.endsWith('.index.json')).sort();
+\t\t\tif (!indexPaths.includes('lean-init.index.json')) throw new Error('Lean library index is missing.');
+\t\t\tfor (const indexPath of indexPaths) {
+\t\t\t\tconst index = JSON.parse(new TextDecoder().decode(new Uint8Array(data.library[indexPath])));
+\t\t\t\tconst chunks = [];
+\t\t\t\tfor (const chunk of index.chunks) {
+\t\t\t\t\tconst entry = data.library[chunk.path.replace(/\\.(gz|zst)(\\.bin)?$/, '')];
+\t\t\t\t\tif (entry && entry.__opfsPack === true && entry.bytes === chunk.uncompressedBytes) {
+\t\t\t\t\t\tchunks.push({ ...chunk, kind: 'opfs', reader: await openSync(entry) });
+\t\t\t\t\t} else if (entry instanceof Uint8Array && entry.byteLength === chunk.uncompressedBytes) {
+\t\t\t\t\t\tchunks.push({ ...chunk, kind: 'sab', bytes: entry });
+\t\t\t\t\t} else {
+\t\t\t\t\t\tthrow new Error(\`Lean library chunk \${chunk.path} is missing.\`);
+\t\t\t\t\t}
+\t\t\t\t}
+\t\t\t\tfor (const file of index.files) {
+\t\t\t\t\tif (!/^(Init|Std|Batteries)(\\/[A-Za-z0-9_.-]+)*\\.(olean(\\.server|\\.private)?|ilean|ir(\\.sig)?)$/.test(file.path))
+\t\t\t\t\t\tthrow new Error(\`Lean library entry \${file.path} is invalid.\`);
+\t\t\t\t\tconst overlaps = [];
+\t\t\t\t\tlet covered = 0;
+\t\t\t\t\tfor (const chunk of chunks) {
+\t\t\t\t\t\tconst start = Math.max(file.offset, chunk.offset);
+\t\t\t\t\t\tconst end = Math.min(file.offset + file.bytes, chunk.offset + chunk.uncompressedBytes);
+\t\t\t\t\t\tif (start < end) { overlaps.push({ chunk, ls: start - chunk.offset, le: end - chunk.offset }); covered += end - start; }
+\t\t\t\t\t}
+\t\t\t\t\tif (covered !== file.bytes) throw new Error(\`Lean library entry \${file.path} is truncated.\`);
+\t\t\t\t\tconst target = LIBRARY_ROOT + '/' + file.path;
+\t\t\t\t\tconst dir = target.slice(0, target.lastIndexOf('/'));
+\t\t\t\t\tif (!createdDirs.has(dir)) { lean.FS.mkdirTree(dir); createdDirs.add(dir); }
+\t\t\t\t\tif (overlaps.length > 0 && overlaps.every((o) => o.chunk.kind === 'opfs')) {
+\t\t\t\t\t\tconst segs = overlaps.map((o) => ({ reader: o.chunk.reader, fileOffset: o.ls, byteLength: o.le - o.ls }));
+\t\t\t\t\t\tlean.FS.writeFile(target, empty);
+\t\t\t\t\t\tconst node = lean.FS.lookupPath(target).node;
+\t\t\t\t\t\tlet lazyOps = opsCache.get(node.stream_ops);
+\t\t\t\t\t\tif (!lazyOps) {
+\t\t\t\t\t\t\tconst baseOps = node.stream_ops;
+\t\t\t\t\t\t\tconst scratch = new Uint8Array(256 * 1024);
+\t\t\t\t\t\t\tlazyOps = {
+\t\t\t\t\t\t\t\t...baseOps,
+\t\t\t\t\t\t\t\tread(stream, buf, off, len, pos) {
+\t\t\t\t\t\t\t\t\tconst s = stream.node.__lazySegments;
+\t\t\t\t\t\t\t\t\tif (!s) return baseOps.read(stream, buf, off, len, pos);
+\t\t\t\t\t\t\t\t\tconst toRead = Math.min(Math.max(0, stream.node.usedBytes - pos), len);
+\t\t\t\t\t\t\t\t\treturn toRead <= 0 ? 0 : readSegs(s, pos, buf, off, toRead, scratch);
+\t\t\t\t\t\t\t\t},
+\t\t\t\t\t\t\t\tmmap(stream, len, pos, prot, flags) {
+\t\t\t\t\t\t\t\t\tconst s = stream.node.__lazySegments;
+\t\t\t\t\t\t\t\t\tif (!s || !baseOps.mmap) return baseOps.mmap?.(stream, len, pos, prot, flags);
+\t\t\t\t\t\t\t\t\tconst actual = Math.min(Math.max(0, stream.node.usedBytes - pos), len);
+\t\t\t\t\t\t\t\t\tconst temp = new Uint8Array(actual);
+\t\t\t\t\t\t\t\t\tif (actual > 0) readSegs(s, pos, temp, 0, actual, scratch);
+\t\t\t\t\t\t\t\t\tstream.node.contents = temp;
+\t\t\t\t\t\t\t\t\ttry { return baseOps.mmap(stream, len, 0, prot, flags); } finally { stream.node.contents = null; }
+\t\t\t\t\t\t\t\t},
+\t\t\t\t\t\t\t};
+\t\t\t\t\t\t\topsCache.set(baseOps, lazyOps);
+\t\t\t\t\t\t}
+\t\t\t\t\t\tnode.usedBytes = file.bytes;
+\t\t\t\t\t\tnode.contents = null;
+\t\t\t\t\t\tnode.__lazySegments = segs;
+\t\t\t\t\t\tnode.stream_ops = lazyOps;
+\t\t\t\t\t} else if (overlaps.length === 1 && overlaps[0].chunk.kind === 'sab') {
+\t\t\t\t\t\tlean.FS.writeFile(target, overlaps[0].chunk.bytes.subarray(overlaps[0].ls, overlaps[0].le), { canOwn: true });
+\t\t\t\t\t} else {
+\t\t\t\t\t\tconst out = new Uint8Array(file.bytes);
+\t\t\t\t\t\tlet w = 0;
+\t\t\t\t\t\tfor (const o of overlaps) {
+\t\t\t\t\t\t\tconst n = o.le - o.ls;
+\t\t\t\t\t\t\tif (o.chunk.kind === 'sab') out.set(o.chunk.bytes.subarray(o.ls, o.le), w);
+\t\t\t\t\t\t\telse readSegs([{ reader: o.chunk.reader, fileOffset: o.ls, byteLength: n }], 0, out, w, n, new Uint8Array(0));
+\t\t\t\t\t\t\tw += n;
+\t\t\t\t\t\t}
+\t\t\t\t\t\tlean.FS.writeFile(target, out, { canOwn: true });
+\t\t\t\t\t}
+\t\t\t\t}
+\t\t\t}
+\t\t} else {
+\t\t\tfor (const file of (isServerBootstrap ? [] : unpackLibrary(data.library))) {
+\t\t\t\tconst path = LIBRARY_ROOT + '/' + file.path;
+\t\t\t\tlean.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+\t\t\t\t// Copy into this process: a document's #eval must never modify the shared source pack.
+\t\t\t\tlean.FS.writeFile(path, file.bytes, { canOwn: true });
+\t\t\t}
+\t\t}
+\t\tdata.library = null;`,
+  'runtime-worker OPFS lazy mount and data.library release',
+);
+
+applyPatch(
+  path.join('lean4', 'runtime-worker.js'),
+  `\t} catch (error) {
+\t\tself.postMessage({ error: String(error), stack: error?.stack });
+\t}`,
+  `\t} catch (error) {
+\t\tcloseReaders();
+\t\tself.postMessage({ error: String(error), stack: error?.stack });
+\t}`,
+  'runtime-worker close OPFS handles on error',
 );
 
 /**

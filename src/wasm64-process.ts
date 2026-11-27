@@ -101,11 +101,13 @@ export const createWasm64ProcessFactory =
       );
     };
 
+    const isServerBootstrap = args.includes('--server');
     worker.postMessage({
       type: 'start',
       glueUrl: runtime.glueUrl,
       wasmModule: runtime.wasmModule,
-      library: runtime.library,
+      library: isServerBootstrap ? {} : runtime.library,
+      ...(isServerBootstrap || !runtime.opfsPacks ? {} : { opfsPacks: runtime.opfsPacks }),
       stdin: { buffer: ringBuffer, capacity: RING_BYTES },
       args,
     });

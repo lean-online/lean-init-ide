@@ -10,6 +10,7 @@ import {
   wasm64CdnUrl,
   type Wasm64Manifest,
 } from './lean-wasm64-runtime';
+import type { OpfsStorageLike } from './opfs-pack-store';
 
 const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
   const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
@@ -646,5 +647,150 @@ describe('loadWasm64Runtime', () => {
       }) as typeof fetch,
     });
     expect(Object.keys(runtime.library)).toEqual([WASM64_INDEX]);
+  });
+
+  it('OPFS 优先落盘分片、二次启动零下载命中、写入失败回退 SAB、dispose 清空引用', async () => {
+    const glue = new TextEncoder().encode('export default () => ({});');
+    const wasm = new Uint8Array([0x00, 0x61, 0x73, 0x6d]);
+    const index = new TextEncoder().encode(JSON.stringify({ chunks: [], files: [] }));
+    const packZst = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 9]);
+    const packRaw = new Uint8Array([10, 20, 30, 40]);
+    const packRawSha = await sha256Hex(packRaw);
+
+    const manifest: Wasm64Manifest = {
+      cacheKey: 'opfs-w64',
+      leanVersion: '4.36.0',
+      runtime: 'test',
+      assets: [
+        {
+          name: WASM64_GLUE,
+          key: `x/${WASM64_GLUE}`,
+          bytes: glue.byteLength,
+          sha256: await sha256Hex(glue),
+        },
+        {
+          name: WASM64_WASM,
+          key: `x/${WASM64_WASM}`,
+          bytes: wasm.byteLength,
+          sha256: await sha256Hex(wasm),
+        },
+        {
+          name: WASM64_INDEX,
+          key: `x/${WASM64_INDEX}`,
+          bytes: index.byteLength,
+          sha256: await sha256Hex(index),
+        },
+        {
+          name: 'lean-init-64-00.pack.zst.bin',
+          key: 'x/lean-init-64-00.pack.zst.bin',
+          bytes: packZst.byteLength,
+          sha256: await sha256Hex(packZst),
+          encoding: 'zstd',
+          uncompressedBytes: packRaw.byteLength,
+          uncompressedSha256: packRawSha,
+        },
+      ],
+    };
+
+    const files = new Map<string, Uint8Array>();
+    let failWrite = false;
+    const makeOpfsStorage = (): OpfsStorageLike => ({
+      getDirectory: async () => ({
+        getDirectoryHandle: async () => ({
+          getDirectoryHandle: async () => ({
+            getDirectoryHandle: async () => {
+              throw new Error('unused');
+            },
+            getFileHandle: async (fileName, opts) => {
+              if (!opts?.create && !files.has(fileName)) {
+                throw new DOMException('Not found', 'NotFoundError');
+              }
+              return {
+                getFile: async () => ({ size: files.get(fileName)?.byteLength ?? 0 }),
+                createWritable: async () => {
+                  let buf = new Uint8Array(0);
+                  return {
+                    write: async (data) => {
+                      if (failWrite) throw new Error('quota exceeded');
+                      const view =
+                        data instanceof ArrayBuffer
+                          ? new Uint8Array(data)
+                          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+                      buf = new Uint8Array(view);
+                    },
+                    close: async () => {
+                      files.set(fileName, buf);
+                    },
+                    abort: async () => {},
+                  };
+                },
+              };
+            },
+            removeEntry: async (name) => {
+              files.delete(name);
+            },
+          }),
+          getFileHandle: async () => {
+            throw new Error('unused');
+          },
+          removeEntry: async () => {},
+        }),
+        getFileHandle: async () => {
+          throw new Error('unused');
+        },
+        removeEntry: async () => {},
+      }),
+    });
+
+    const fetchedPacks: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const name = String(input).split('/').pop()?.split('?')[0] ?? '';
+      if (name === WASM64_GLUE) return new Response(glue, { status: 200 });
+      if (name === WASM64_WASM) return new Response(wasm, { status: 200 });
+      if (name === WASM64_INDEX) return new Response(index, { status: 200 });
+      if (name === 'lean-init-64-00.pack.zst.bin') {
+        fetchedPacks.push(name);
+        return new Response(packZst, { status: 200 });
+      }
+      return new Response('missing', { status: 404 });
+    }) as typeof fetch;
+
+    const first = await loadWasm64Runtime({
+      manifest,
+      fetchImpl,
+      opfsStorage: makeOpfsStorage(),
+      createZstd: async () => ({ decode: () => packRaw }),
+    });
+    expect(fetchedPacks).toHaveLength(1);
+    expect(first.library['lean-init-64-00.pack']).toBeUndefined();
+    expect(first.opfsPacks?.['lean-init-64-00.pack']?.bytes).toBe(packRaw.byteLength);
+    first.dispose();
+    expect(Object.keys(first.library)).toEqual([]);
+    expect(Object.keys(first.opfsPacks ?? {})).toEqual([]);
+
+    // 二次加载：OPFS 命中后不再请求或解压该分片。
+    fetchedPacks.length = 0;
+    const second = await loadWasm64Runtime({
+      manifest,
+      fetchImpl,
+      opfsStorage: makeOpfsStorage(),
+    });
+    expect(fetchedPacks).toHaveLength(0);
+    expect(second.opfsPacks?.['lean-init-64-00.pack']?.bytes).toBe(packRaw.byteLength);
+    second.dispose();
+
+    // 清空 OPFS 并模拟磁盘写满：自动退回 SharedArrayBuffer 内存分片。
+    files.clear();
+    failWrite = true;
+    const fallback = await loadWasm64Runtime({
+      manifest,
+      fetchImpl,
+      opfsStorage: makeOpfsStorage(),
+      createZstd: async () => ({ decode: () => packRaw }),
+    });
+    expect(fallback.opfsPacks).toBeUndefined();
+    expect(fallback.library['lean-init-64-00.pack']).toEqual(packRaw);
+    expect(fallback.library['lean-init-64-00.pack']?.buffer).toBeInstanceOf(SharedArrayBuffer);
+    fallback.dispose();
   });
 });

@@ -70,6 +70,20 @@ describe('@wasm-idle/lsp 补丁', () => {
     expect(workerSource).toContain("type: 'memorySample'");
   });
 
+  it('打通 wasm32 OPFS 分片持久化、懒读 MEMFS 挂载、--server 跳过库传输与 shutdown 释放', () => {
+    expect(typesSource).toContain('extensionOpfsPacks?:');
+    expect(workerSource).toContain(
+      "const isBootstrap = Array.isArray(args) && args.includes('--server');",
+    );
+    expect(workerSource).toContain('library: isBootstrap ? null : library,');
+    expect(workerSource).toContain('library = wasmModule = undefined;');
+    expect(workerSource).toContain("getDirectoryHandle('lean-packs-v1', { create: true })");
+    expect(workerSource).toContain('extensionOpfsPacks ?? {}');
+    expect(runtimeWorkerSource).toContain('v.__opfsPack === true');
+    expect(runtimeWorkerSource).toContain('closeReaders();');
+    expect(runtimeWorkerSource).toContain('data.library = null;');
+  });
+
   it('已安装的 WASM_LEAN4_PROFILE 与 config/lean4-runtime.json 及 runner-worker.js 完全对齐', async () => {
     const expectedVersion = /(\d+\.\d+\.\d+)/.exec(manifest.runtime)?.[1];
     expect(WASM_LEAN4_PROFILE.version).toBe(expectedVersion);

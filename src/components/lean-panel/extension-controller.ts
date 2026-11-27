@@ -1,6 +1,7 @@
 /**
  * 运行时架构（wasm32 / 实验性 wasm64）与扩展库按需加载控制器：
- * 负责扩展依赖展开、队列防重入、sessionStorage/localStorage 偏好持久化以及架构切换同步。
+ * 负责扩展依赖展开、按架构隔离的默认勾选偏好、队列防重入、
+ * sessionStorage/localStorage 持久化、缓存释放生命周期以及架构切换同步。
  */
 import { DEFAULT_RUNTIME_ARCH, probeMemory64Support, type LeanRuntimeArch } from '../../device';
 import type { Messages } from '../../i18n/types';
@@ -43,6 +44,16 @@ export type ExtensionControllerOptions = {
   readonly isWasm64Published?: typeof wasm64Available;
 };
 
+const isRuntimeExtensionId = (id: string): id is RuntimeExtensionId =>
+  runtimeExtensions.some((extension) => extension.id === id);
+
+const encodeDefaultExtensions = (
+  byArch: Readonly<Record<RuntimeArch, ReadonlySet<RuntimeExtensionId>>>,
+): string[] => [
+  ...[...byArch.wasm32].map((id) => `wasm32:${id}`),
+  ...[...byArch.wasm64].map((id) => `wasm64:${id}`),
+];
+
 export const createExtensionController = (options: ExtensionControllerOptions) => {
   const {
     host,
@@ -76,13 +87,31 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     setRuntimeArch(selectedArch);
   }
 
-  const isRuntimeExtensionId = (id: string): id is RuntimeExtensionId =>
-    runtimeExtensions.some((extension) => extension.id === id);
   const savedSession = readRuntimeSession();
   const sessionExtensionIds = (savedSession?.extensions ?? []).filter(isRuntimeExtensionId);
-  const defaultExtensions = new Set<RuntimeExtensionId>(
-    getDefaultExtensions().filter(isRuntimeExtensionId),
-  );
+
+  // 按架构隔离默认勾选偏好（例如 wasm32 勾 Std 不应隐式触发 wasm64 280MB Std 默认下载）；
+  // 旧版未带前缀的纯 id 兼容视为 wasm32 偏好。
+  const defaultExtensionsByArch: Record<RuntimeArch, Set<RuntimeExtensionId>> = {
+    wasm32: new Set<RuntimeExtensionId>(),
+    wasm64: new Set<RuntimeExtensionId>(),
+  };
+  for (const raw of getDefaultExtensions()) {
+    if (raw.startsWith('wasm32:')) {
+      const id = raw.slice('wasm32:'.length);
+      if (isRuntimeExtensionId(id) && extensionAvailableOn('wasm32', id)) {
+        defaultExtensionsByArch.wasm32.add(id);
+      }
+    } else if (raw.startsWith('wasm64:')) {
+      const id = raw.slice('wasm64:'.length);
+      if (isRuntimeExtensionId(id) && extensionAvailableOn('wasm64', id)) {
+        defaultExtensionsByArch.wasm64.add(id);
+      }
+    } else if (isRuntimeExtensionId(raw) && extensionAvailableOn('wasm32', raw)) {
+      defaultExtensionsByArch.wasm32.add(raw);
+    }
+  }
+
   const navEntry = performance?.getEntriesByType?.('navigation')[0] as
     PerformanceNavigationTiming | undefined;
   const resumeRuntime = savedSession?.active === true && navEntry?.type !== 'reload';
@@ -93,7 +122,7 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
   let desiredExtensions = new Set<RuntimeExtensionId>();
   let pendingSelection: Set<RuntimeExtensionId> | null = null;
   let restorePromise: Promise<void> | null = null;
-  let libraryBusy = false;
+  let activeDrainPromise: Promise<void> | null = null;
 
   const libraryButtons = [...host.querySelectorAll<HTMLButtonElement>('[data-library]')];
   const defaultCheckboxes = [...host.querySelectorAll<HTMLInputElement>('[data-library-default]')];
@@ -127,11 +156,12 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
   };
 
   const syncDefaultCheckboxes = () => {
+    const defaultsForArch = defaultExtensionsByArch[selectedArch];
     for (const input of defaultCheckboxes) {
       const id = input.dataset.libraryDefault as RuntimeExtensionId;
       const visible = archOfElement(input) === selectedArch;
       input.hidden = !visible;
-      input.checked = visible && extensionAvailable(id) && defaultExtensions.has(id);
+      input.checked = visible && extensionAvailable(id) && defaultsForArch.has(id);
       input.disabled = librariesUnavailable() || !visible || !extensionAvailable(id);
     }
   };
@@ -140,17 +170,18 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     input.addEventListener('change', () => {
       if (librariesUnavailable() || archOfElement(input) !== selectedArch) return;
       const id = input.dataset.libraryDefault as RuntimeExtensionId;
+      const defaultsForArch = defaultExtensionsByArch[selectedArch];
       if (input.checked) {
         for (const dependency of resolveForArch([id], selectedArch)) {
-          defaultExtensions.add(dependency);
+          defaultsForArch.add(dependency);
         }
       } else {
-        defaultExtensions.delete(id);
+        defaultsForArch.delete(id);
         for (const extension of runtimeExtensionsFor(selectedArch)) {
-          if (extension.requires.includes(id)) defaultExtensions.delete(extension.id);
+          if (extension.requires.includes(id)) defaultsForArch.delete(extension.id);
         }
       }
-      setDefaultExtensions(defaultExtensions);
+      setDefaultExtensions(encodeDefaultExtensions(defaultExtensionsByArch));
       syncDefaultCheckboxes();
     });
   }
@@ -185,35 +216,6 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     syncLibraryButtons();
   };
 
-  for (const button of runtimeArchButtons) {
-    button.addEventListener('click', () => {
-      const nextArch = button.dataset.runtimeArch as LeanRuntimeArch;
-      const blockedReason = nextArch === 'wasm64' ? wasm64Note() : '';
-      if (blockedReason) {
-        log(blockedReason);
-        syncRuntimeArchUi();
-        return;
-      }
-      if (nextArch === selectedArch) return;
-      selectedArch = nextArch;
-      setRuntimeArch(nextArch);
-      extensionPackCache.clear();
-      extensionPacks = {};
-      for (const id of [...activeExtensions]) {
-        if (!extensionAvailableOn(nextArch, id)) activeExtensions.delete(id);
-      }
-      desiredExtensions = new Set(activeExtensions);
-      restorePromise = null;
-      options.onArchChanged?.(nextArch);
-      syncRuntimeArchUi();
-      log(t.logRuntimeArchSelected(nextArch === 'wasm64' ? t.runtimeWasm64 : t.runtimeWasm32));
-      if (nextArch === 'wasm64') log(t.runtimeWasm64AssetNote);
-      closeMenus();
-      if (isSessionActive()) void restartSession();
-    });
-  }
-  syncRuntimeArchUi();
-
   const commitExtensionSet = (ids: Iterable<RuntimeExtensionId>, buildPacks = true) => {
     const list = [...ids];
     extensionPacks = buildPacks
@@ -230,48 +232,35 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     }
   };
 
-  const loadMissingPacks = async (ids: readonly RuntimeExtensionId[], showProgress = false) => {
-    for (const id of ids) {
-      if (extensionPackCache.has(id)) continue;
-      const packs = await (showProgress
-        ? loadPacks([id], (ratio) => {
-            const button = libraryButtons.find((item) => item.dataset.library === id);
-            if (button) button.textContent = t.libraryLoading(`${Math.round(ratio * 100)}%`);
-          })
-        : loadPacks([id]));
-      extensionPackCache.set(id, packs);
-    }
+  /** 清空主线程持有的扩展包缓存并重置加载标志，供退出/退后台/硬限时立即释放内存。 */
+  const clearPackCache = () => {
+    extensionPackCache.clear();
+    extensionPacks = {};
+    restorePromise = null;
   };
 
-  const restoreSavedExtensions = (): Promise<void> => {
-    if (restorePromise) return restorePromise;
-    const arch = selectedArch;
-    const ids = resolveForArch(
-      [...sessionExtensionIds, ...defaultExtensions, ...requiredExtensions],
-      arch,
-    );
-    if (ids.length === 0 || arch === 'wasm64') {
-      if (arch === 'wasm64') commitExtensionSet(ids, false);
-      restorePromise = Promise.resolve();
-      return restorePromise;
+  const loadMissingPacks = async (
+    ids: readonly RuntimeExtensionId[],
+    showProgress = false,
+    arch: RuntimeArch = selectedArch,
+  ) => {
+    for (const id of ids) {
+      if (extensionPackCache.has(id)) continue;
+      const onProgress = showProgress
+        ? (ratio: number) => {
+            const button = libraryButtons.find(
+              (item) => item.dataset.library === id && archOfElement(item) === arch,
+            );
+            if (button) button.textContent = t.libraryLoading(`${Math.round(ratio * 100)}%`);
+          }
+        : undefined;
+      const packs =
+        !showProgress && arch === 'wasm32'
+          ? await loadPacks([id])
+          : await loadPacks([id], onProgress, arch);
+      // wasm64 扩展包已由 OPFS 持久化，由 loadWasm64Runtime 按 id 挂载，无需在主线程保留 packs。
+      extensionPackCache.set(id, arch === 'wasm64' ? {} : packs);
     }
-    restorePromise = (async () => {
-      libraryBusy = true;
-      syncLibraryButtons();
-      for (const button of libraryButtons) button.disabled = true;
-      setStatus(t.libraryRestarting, 'loading');
-      try {
-        await loadMissingPacks(ids);
-        commitExtensionSet(ids);
-      } catch (error) {
-        log(t.libraryError(error instanceof Error ? error.message : String(error)));
-        writeRuntimeSession({ active: false, extensions: [] });
-      } finally {
-        libraryBusy = false;
-        syncLibraryButtons();
-      }
-    })();
-    return restorePromise;
   };
 
   const applyExtensionSelection = async (next: Set<RuntimeExtensionId>) => {
@@ -279,13 +268,9 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     const resolved = resolveForArch(next, selectedArch);
     const wasActive = isSessionActive();
     try {
-      if (selectedArch === 'wasm64') {
-        commitExtensionSet(resolved, false);
-      } else {
-        await loadMissingPacks(resolved, true);
-        prunePackCache(new Set(resolved));
-        commitExtensionSet(resolved);
-      }
+      await loadMissingPacks(resolved, true, selectedArch);
+      prunePackCache(new Set(resolved));
+      commitExtensionSet(resolved, selectedArch !== 'wasm64');
       syncLibraryButtons();
       if (wasActive) {
         setStatus(t.libraryRestarting, 'loading');
@@ -296,25 +281,30 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
       log(t.libraryError(message));
       setStatus(t.libraryError(message), 'error');
       prunePackCache(previous);
-      commitExtensionSet(previous);
+      commitExtensionSet(previous, selectedArch !== 'wasm64');
+      syncLibraryButtons();
     }
     persistSession(isSessionActive());
   };
 
-  const drainExtensionSelections = async () => {
-    if (libraryBusy) return;
-    libraryBusy = true;
-    syncLibraryButtons();
-    try {
-      while (pendingSelection) {
-        const next = pendingSelection;
-        pendingSelection = null;
-        await applyExtensionSelection(next);
-      }
-    } finally {
-      libraryBusy = false;
+  const drainExtensionSelections = (): Promise<void> => {
+    if (activeDrainPromise) return activeDrainPromise;
+    if (!pendingSelection) return restorePromise ?? Promise.resolve();
+    activeDrainPromise = (async () => {
+      if (restorePromise) await restorePromise;
       syncLibraryButtons();
-    }
+      try {
+        while (pendingSelection) {
+          const next = pendingSelection;
+          pendingSelection = null;
+          await applyExtensionSelection(next);
+        }
+      } finally {
+        activeDrainPromise = null;
+        syncLibraryButtons();
+      }
+    })();
+    return activeDrainPromise;
   };
 
   const enqueueExtensionSelection = (next: Set<RuntimeExtensionId>) => {
@@ -322,6 +312,68 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     pendingSelection = new Set(next);
     restorePromise ??= Promise.resolve();
     void drainExtensionSelections();
+  };
+
+  for (const button of runtimeArchButtons) {
+    button.addEventListener('click', () => {
+      const nextArch = button.dataset.runtimeArch as LeanRuntimeArch;
+      const blockedReason = nextArch === 'wasm64' ? wasm64Note() : '';
+      if (blockedReason) {
+        log(blockedReason);
+        syncRuntimeArchUi();
+        return;
+      }
+      if (nextArch === selectedArch) return;
+
+      // 切换架构后必须先清空旧架构的 pack 与「已加载」UI 假状态；
+      // 对新架构依然支持的保留扩展（如 wasm64 <-> wasm32 的 std），重新下载/OPFS 恢复并重启会话。
+      const retained = resolveForArch(activeExtensions, nextArch);
+      selectedArch = nextArch;
+      setRuntimeArch(nextArch);
+      clearPackCache();
+      pendingSelection = null;
+      activeExtensions.clear();
+      desiredExtensions = new Set(retained);
+      options.onArchChanged?.(nextArch);
+      syncRuntimeArchUi();
+      log(t.logRuntimeArchSelected(nextArch === 'wasm64' ? t.runtimeWasm64 : t.runtimeWasm32));
+      if (nextArch === 'wasm64') log(t.runtimeWasm64AssetNote);
+      closeMenus();
+      if (retained.length > 0) {
+        enqueueExtensionSelection(new Set(retained));
+      } else if (isSessionActive()) {
+        void restartSession();
+      }
+    });
+  }
+  syncRuntimeArchUi();
+
+  const restoreSavedExtensions = (): Promise<void> => {
+    if (restorePromise) return restorePromise;
+    const arch = selectedArch;
+    const ids = resolveForArch(
+      [...sessionExtensionIds, ...defaultExtensionsByArch[arch], ...requiredExtensions],
+      arch,
+    );
+    if (ids.length === 0) {
+      restorePromise = Promise.resolve();
+      return restorePromise;
+    }
+    restorePromise = (async () => {
+      syncLibraryButtons();
+      for (const button of libraryButtons) button.disabled = true;
+      setStatus(isSessionActive() ? t.libraryRestarting : t.statusLoading, 'loading');
+      try {
+        await loadMissingPacks(ids, false, arch);
+        commitExtensionSet(ids, arch !== 'wasm64');
+      } catch (error) {
+        log(t.libraryError(error instanceof Error ? error.message : String(error)));
+        writeRuntimeSession({ active: false, extensions: [] });
+      } finally {
+        syncLibraryButtons();
+      }
+    })();
+    return restorePromise;
   };
 
   for (const button of libraryButtons) {
@@ -355,11 +407,16 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     wasAutoSwitchedFromWasm64: () => autoStableFromWasm64,
     restoreSavedExtensions,
     drainExtensionSelections,
+    clearPackCache,
+    dispose: () => {
+      pendingSelection = null;
+      clearPackCache();
+    },
     enableFromQuickFix: (id: RuntimeExtensionId) => {
       if (selectedArch === 'wasm64' && !extensionAvailableOn('wasm64', id)) {
         selectedArch = DEFAULT_RUNTIME_ARCH;
         setRuntimeArch(selectedArch);
-        restorePromise = null;
+        clearPackCache();
         options.onArchChanged?.(selectedArch);
         syncRuntimeArchUi();
       }
