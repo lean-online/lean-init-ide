@@ -428,6 +428,8 @@ end
     libraryLoaded: '已加载',
     libraryRelease: '释放',
     libraryReleaseAll: '释放全部',
+    libraryRequiredBy: (dependents) =>
+      `${dependents} 依赖该库；请先释放 ${dependents}，或点击下方「释放全部」`,
     libraryRestarting: '正在重启 Lean…',
     libraryError: (message) => `扩展库加载失败：${message}`,
     expand: '展开',

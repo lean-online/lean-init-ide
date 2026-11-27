@@ -140,6 +140,15 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
     writeRuntimeSession({ active, extensions: [...activeExtensions] });
   };
 
+  const activeDependentsOf = (
+    id: RuntimeExtensionId,
+    set: ReadonlySet<RuntimeExtensionId> = activeExtensions,
+  ) =>
+    runtimeExtensionsFor(selectedArch).filter(
+      (extension) =>
+        extension.id !== id && set.has(extension.id) && extension.requires.includes(id),
+    );
+
   const syncLibraryButtons = () => {
     for (const button of libraryButtons) {
       const id = button.dataset.library as RuntimeExtensionId;
@@ -148,9 +157,16 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
       if (row) row.hidden = !visible;
       button.hidden = !visible;
       const active = visible && extensionAvailable(id) && activeExtensions.has(id);
+      const dependents = active ? activeDependentsOf(id) : [];
       button.textContent = active ? t.libraryRelease : t.libraryLoad;
       button.dataset.state = active ? 'loaded' : 'idle';
-      button.disabled = librariesUnavailable() || !visible || !extensionAvailable(id);
+      if (dependents.length > 0) {
+        button.title = t.libraryRequiredBy(dependents.map((item) => item.label).join(' / '));
+      } else {
+        button.removeAttribute('title');
+      }
+      button.disabled =
+        librariesUnavailable() || !visible || !extensionAvailable(id) || dependents.length > 0;
     }
     if (releaseAllEl) releaseAllEl.disabled = activeExtensions.size === 0;
   };
@@ -382,10 +398,13 @@ export const createExtensionController = (options: ExtensionControllerOptions) =
       const id = button.dataset.library as RuntimeExtensionId;
       const next = new Set(desiredExtensions);
       if (next.has(id)) {
-        next.delete(id);
-        for (const extension of runtimeExtensionsFor(selectedArch)) {
-          if (extension.requires.includes(id)) next.delete(extension.id);
+        const dependents = activeDependentsOf(id, next);
+        if (dependents.length > 0) {
+          log(t.libraryRequiredBy(dependents.map((item) => item.label).join(' / ')));
+          syncLibraryButtons();
+          return;
         }
+        next.delete(id);
       } else {
         next.add(id);
       }
