@@ -2,10 +2,12 @@
  * 实验性 wasm64 运行时的资产加载：经同源网关取清单里登记的资产，逐个校验字节数与
  * SHA-256，解 zstd，再编译 wasm。清单为空（尚未发布）时调用方应保持 wasm32。
  *
- * 分发路径：
- * - 大文件（ranged）：优先走 Service Worker 的 /wasm-lean4-64/<name>（按语言/时区选魔搭镜像或同源 /cdn/，4 MiB 分片 + 校验）；
- * - 小文件（glue / index）及 SW 未接管时的兜底：复用 assetSources()，国内优先魔搭镜像，海外优先同源 /cdn/ 网关。
- * GitHub Release 没有 CORS 头，浏览器侧不会请求它。
+ * 内存与磁盘优化：
+ * - OPFS 优先路径：`.pack` 分片解压校验后逐块落盘 `lean-packs-v1/wasm64-<cacheKey>`，
+ *   立刻释放 JS 堆；二次启动跳过下载与解压，Worker 侧通过 `SyncAccessHandle` 懒读；
+ * - 流式立即处理：不再先攒满 `payload` Map 再整份深拷贝成 SharedArrayBuffer（消除 2× 峰值）；
+ * - 生命周期清理：无论成功或失败都在 `finally` 中释放 Zstd Wasm 解码器，并在 `dispose()` 时
+ *   清空 `library` 与 `opfsPacks` 引用。
  */
 import manifestJson from '../config/lean4-wasm64-runtime.json';
 import {
@@ -15,6 +17,7 @@ import {
   type RuntimeAsset,
   type RuntimeManifest,
 } from './asset-sources.mjs';
+import { openOpfsPackStore, type OpfsPackRef, type OpfsStorageLike } from './opfs-pack-store';
 
 export type Wasm64Asset = {
   readonly name: string;
@@ -93,8 +96,10 @@ export type LoadedWasm64Runtime = {
   /** 适配后的 glue（Blob URL），process worker 与 pthread 都从它加载。 */
   readonly glueUrl: string;
   readonly wasmModule: WebAssembly.Module;
-  /** index.json 与各 pack（SharedArrayBuffer 承载，多个进程共享不复制）。 */
+  /** index.json 与回退到 SharedArrayBuffer 承载的分片（多个进程共享不复制）。 */
   readonly library: Record<string, Uint8Array>;
+  /** 落盘在 OPFS 的解压后分片引用，供 Worker 挂载 0 字节懒读 MEMFS。 */
+  readonly opfsPacks?: Record<string, OpfsPackRef>;
   dispose(): void;
 };
 
@@ -104,6 +109,7 @@ export type LoadWasm64Options = {
   readonly extensions?: readonly string[];
   readonly fetchImpl?: typeof fetch;
   readonly createZstd?: () => Promise<ZstdDecoder>;
+  readonly opfsStorage?: OpfsStorageLike;
   readonly onStage?: (stage: string) => void;
   readonly concurrency?: number;
   /** 单个资产单个源的下载预算；超时后中止并尝试下一个源。 */
@@ -204,6 +210,12 @@ const requireAsset = (manifest: Wasm64Manifest, name: string): Wasm64Asset => {
   return asset;
 };
 
+const share = (bytes: Uint8Array): Uint8Array => {
+  const shared = new Uint8Array(new SharedArrayBuffer(bytes.byteLength));
+  shared.set(bytes);
+  return shared;
+};
+
 export const loadWasm64Runtime = async (
   options: LoadWasm64Options = {},
 ): Promise<LoadedWasm64Runtime> => {
@@ -211,15 +223,38 @@ export const loadWasm64Runtime = async (
   if (!isWasm64Published(manifest)) {
     throw new Error('wasm64 运行时尚未发布（清单为空）');
   }
+
+  const selectedExtensions = resolveWasm64ExtensionIds(options.extensions ?? [], manifest).map(
+    (id) => {
+      const extension = wasm64ExtensionById(id, manifest);
+      if (!extension) throw new Error(`wasm64 清单缺少扩展 ${id}`);
+      const indexAsset = extension.assets.find((item) => item.name.endsWith('.index.json'));
+      if (!indexAsset) throw new Error(`wasm64 扩展 ${extension.id} 缺少索引资产`);
+      return extension;
+    },
+  );
+  const extensionAssets = selectedExtensions.flatMap((extension) => extension.assets);
+  // 扩展资产名必须与基础资产不重名，否则逻辑映射会互相覆盖。
+  const assetNames = new Set(manifest.assets.map((asset) => asset.name));
+  for (const asset of extensionAssets) {
+    if (assetNames.has(asset.name)) throw new Error(`wasm64 扩展资产重名: ${asset.name}`);
+    assetNames.add(asset.name);
+  }
+  const allAssets = [...manifest.assets, ...extensionAssets];
+
   const fetchImpl = options.fetchImpl ?? fetch;
   const cache = await openRuntimeCache(manifest.cacheKey);
+  const opfsStore = await openOpfsPackStore(`wasm64-${manifest.cacheKey}`, options.opfsStorage);
   let zstdPromise: Promise<ZstdDecoder> | undefined;
   const zstd = (): Promise<ZstdDecoder> => (zstdPromise ??= (options.createZstd ?? defaultZstd)());
 
   const verifyDelivered = async (asset: Wasm64Asset, bytes: Uint8Array): Promise<boolean> =>
     bytes.byteLength === asset.bytes && (await sha256Of(bytes)) === asset.sha256;
 
-  const fetchVerifiedAsset = async (asset: Wasm64Asset): Promise<Uint8Array> => {
+  const fetchVerifiedAsset = async (
+    asset: Wasm64Asset,
+    skipCachePut: boolean,
+  ): Promise<Uint8Array> => {
     const cdnUrl = wasm64CdnUrl(manifest, asset);
     if (cache) {
       try {
@@ -263,7 +298,8 @@ export const loadWasm64Runtime = async (
           errors.push(`${url}: SHA-256 mismatch`);
           continue;
         }
-        if (cache) {
+        // 已确定会解压写入 OPFS 的 pack 不再重复写入 CacheStorage，避免双倍磁盘配额消耗。
+        if (cache && !skipCachePut) {
           try {
             await cache.put(
               cdnUrl,
@@ -289,86 +325,120 @@ export const loadWasm64Runtime = async (
     throw new Error(`wasm64 资产 ${asset.name} 所有源均失败: ${errors.join(' | ')}`);
   };
 
-  const download = async (asset: Wasm64Asset): Promise<Uint8Array> => {
-    options.onStage?.(asset.name);
-    const delivered = await fetchVerifiedAsset(asset);
-    if (asset.encoding !== 'zstd') return delivered;
-
+  const decodeZstd = async (asset: Wasm64Asset, skipCachePut: boolean): Promise<Uint8Array> => {
     const expected = asset.uncompressedBytes;
     const expectedHash = asset.uncompressedSha256;
     if (expected === undefined || expectedHash === undefined) {
       throw new Error(`wasm64 资产 ${asset.name} 缺少解压回执`);
     }
-    const decoded = (await zstd()).decode(delivered, expected);
+    const decoder = await zstd();
+    // 独立作用域：decode 返回后 compressed 立刻离开词法作用域，计算 SHA-256 时不再同时常驻。
+    const decoded = await (async () => {
+      const delivered = await fetchVerifiedAsset(asset, skipCachePut);
+      return decoder.decode(delivered, expected);
+    })();
     if (decoded.byteLength !== expected || (await sha256Of(decoded)) !== expectedHash) {
       throw new Error(`wasm64 资产 ${asset.name} 解压后校验失败`);
     }
     return decoded;
   };
 
-  const selectedExtensions = resolveWasm64ExtensionIds(options.extensions ?? [], manifest).map(
-    (id) => {
-      const extension = wasm64ExtensionById(id, manifest);
-      if (!extension) throw new Error(`wasm64 清单缺少扩展 ${id}`);
-      return extension;
-    },
-  );
-  const extensionAssets = selectedExtensions.flatMap((extension) => extension.assets);
-  // 扩展资产名必须与基础资产不重名，否则 payload 会互相覆盖。
-  const assetNames = new Set(manifest.assets.map((asset) => asset.name));
-  for (const asset of extensionAssets) {
-    if (assetNames.has(asset.name)) throw new Error(`wasm64 扩展资产重名: ${asset.name}`);
-    assetNames.add(asset.name);
-  }
-  const allAssets = [...manifest.assets, ...extensionAssets];
+  const download = async (asset: Wasm64Asset, skipCachePut: boolean): Promise<Uint8Array> => {
+    options.onStage?.(asset.name);
+    if (asset.encoding !== 'zstd') return fetchVerifiedAsset(asset, skipCachePut);
+    return decodeZstd(asset, skipCachePut);
+  };
 
-  // 受限并发下载；任何一个失败立即整体失败，不使用残缺资产。
-  const payload = new Map<string, Uint8Array>();
-  const queue = [...allAssets];
-  const workerCount = Math.max(1, Math.min(options.concurrency ?? 4, queue.length));
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      for (let asset = queue.shift(); asset; asset = queue.shift()) {
-        payload.set(asset.name, await download(asset));
+  let wasmModule: WebAssembly.Module | undefined;
+  let glueUrl: string | undefined;
+  const library: Record<string, Uint8Array> = {};
+  const opfsPacks: Record<string, OpfsPackRef> = {};
+
+  const processAsset = async (asset: Wasm64Asset): Promise<void> => {
+    if (asset.name === WASM64_WASM) {
+      const bytes = await download(asset, false);
+      options.onStage?.('compile');
+      wasmModule = await WebAssembly.compile(bytes as BufferSource);
+      return;
+    }
+    if (asset.name === WASM64_GLUE) {
+      const glueText = new TextDecoder().decode(await download(asset, false));
+      glueUrl = URL.createObjectURL(new Blob([glueText], { type: 'text/javascript' }));
+      return;
+    }
+    if (asset.name.endsWith('.index.json')) {
+      library[asset.name] = share(await download(asset, false));
+      return;
+    }
+    if (asset.name.endsWith('.pack.zst.bin')) {
+      const logicalName = asset.name.replace(/\.zst\.bin$/, '');
+      const hasReceipt =
+        asset.uncompressedBytes !== undefined && asset.uncompressedSha256 !== undefined;
+      if (opfsStore && hasReceipt) {
+        const hit = await opfsStore.has(
+          logicalName,
+          asset.uncompressedSha256!,
+          asset.uncompressedBytes!,
+        );
+        if (hit) {
+          options.onStage?.(asset.name);
+          opfsPacks[logicalName] = hit;
+          return;
+        }
       }
-    }),
-  );
-
-  const take = (name: string): Uint8Array => {
-    const bytes = payload.get(name);
-    if (!bytes) throw new Error(`wasm64 资产 ${name} 缺失`);
-    payload.delete(name);
-    return bytes;
+      const bytes = await download(asset, Boolean(opfsStore && hasReceipt));
+      if (opfsStore && asset.uncompressedSha256 !== undefined) {
+        try {
+          opfsPacks[logicalName] = await opfsStore.write(
+            logicalName,
+            asset.uncompressedSha256,
+            bytes,
+          );
+          return;
+        } catch {
+          // OPFS 写入失败（如磁盘配额满）自动降级回 SharedArrayBuffer。
+        }
+      }
+      library[logicalName] = share(bytes);
+      return;
+    }
+    await download(asset, false);
   };
 
-  options.onStage?.('compile');
-  const wasmModule = await WebAssembly.compile(take(WASM64_WASM) as BufferSource);
-  const glueText = new TextDecoder().decode(take(WASM64_GLUE));
-  const glueUrl = URL.createObjectURL(new Blob([glueText], { type: 'text/javascript' }));
+  try {
+    // 受限并发下载并流式落地；任何一个失败立即整体失败，并在 finally 释放 zstd Wasm 堆。
+    const queue = [...allAssets];
+    const workerCount = Math.max(1, Math.min(options.concurrency ?? 4, queue.length));
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        for (let asset = queue.shift(); asset; asset = queue.shift()) {
+          await processAsset(asset);
+        }
+      }),
+    );
 
-  const share = (bytes: Uint8Array): Uint8Array => {
-    const shared = new Uint8Array(new SharedArrayBuffer(bytes.byteLength));
-    shared.set(bytes);
-    return shared;
-  };
-
-  const indexAsset = requireAsset(manifest, WASM64_INDEX);
-  const indexBytes = take(indexAsset.name);
-  const library: Record<string, Uint8Array> = { [WASM64_INDEX]: share(indexBytes) };
-  for (const extension of selectedExtensions) {
-    const asset = extension.assets.find((item) => item.name.endsWith('.index.json'));
-    if (!asset) throw new Error(`wasm64 扩展 ${extension.id} 缺少索引资产`);
-    library[asset.name] = share(take(asset.name));
+    if (!wasmModule) throw new Error(`wasm64 资产 ${WASM64_WASM} 缺失`);
+    if (!glueUrl) throw new Error(`wasm64 资产 ${WASM64_GLUE} 缺失`);
+    const indexAsset = requireAsset(manifest, WASM64_INDEX);
+    if (!library[indexAsset.name]) throw new Error(`wasm64 资产 ${indexAsset.name} 缺失`);
+  } catch (error) {
+    if (glueUrl) URL.revokeObjectURL(glueUrl);
+    for (const key of Object.keys(library)) delete library[key];
+    throw error;
+  } finally {
+    zstdPromise = undefined;
   }
-  for (const asset of allAssets) {
-    if (!asset.name.endsWith('.pack.zst.bin')) continue;
-    library[asset.name.replace(/\.zst\.bin$/, '')] = share(take(asset.name));
-  }
 
+  const finalGlueUrl = glueUrl;
   return {
-    glueUrl,
+    glueUrl: finalGlueUrl,
     wasmModule,
     library,
-    dispose: () => URL.revokeObjectURL(glueUrl),
+    ...(Object.keys(opfsPacks).length > 0 ? { opfsPacks } : {}),
+    dispose: () => {
+      URL.revokeObjectURL(finalGlueUrl);
+      for (const key of Object.keys(library)) delete library[key];
+      for (const key of Object.keys(opfsPacks)) delete opfsPacks[key];
+    },
   };
 };

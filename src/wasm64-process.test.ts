@@ -38,6 +38,7 @@ type StartMessage = {
   glueUrl: string;
   wasmModule: WebAssembly.Module;
   library: Record<string, Uint8Array>;
+  opfsPacks?: Record<string, { __opfsPack: true; dir: string; fileName: string; bytes: number }>;
   stdin: { buffer: SharedArrayBuffer; capacity: number };
   args: readonly string[];
 };
@@ -50,7 +51,11 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve();
 };
 
-const setup = (startupTimeoutMs = 60_000) => {
+const setup = (
+  startupTimeoutMs = 60_000,
+  args: readonly string[] = ['-j2', '--server'],
+  withOpfs = false,
+) => {
   const messages: LspMessage[] = [];
   const failures: string[] = [];
   const exits: number[] = [];
@@ -60,11 +65,23 @@ const setup = (startupTimeoutMs = 60_000) => {
       glueUrl: 'blob:https://example.test/glue64',
       wasmModule: {} as WebAssembly.Module,
       library: { 'lean-init-64.index.json': new Uint8Array([1]) },
+      ...(withOpfs
+        ? {
+            opfsPacks: {
+              'lean-init-64-00.pack': {
+                __opfsPack: true,
+                dir: 'wasm64-test',
+                fileName: 'p0.bin',
+                bytes: 4,
+              },
+            },
+          }
+        : {}),
       dispose: vi.fn(),
     },
     { startupTimeoutMs, onMemoryBytes: (bytes) => memory.push(bytes) },
   );
-  const process = factory(['-j2', '--server'], {
+  const process = factory(args, {
     onMessage: (message) => messages.push(message),
     onExit: (code) => exits.push(code),
     onFailure: (message) => failures.push(message),
@@ -81,16 +98,23 @@ beforeEach(() => {
 });
 
 describe('createWasm64ProcessFactory', () => {
-  it('启动消息带上运行时、stdin 环形缓冲与进程参数', () => {
-    const { worker } = setup();
-    const start = worker.posted[0] as StartMessage;
+  it('启动消息带上运行时、stdin 环形缓冲与进程参数；--server 不传库，--worker 透传 opfsPacks', () => {
+    const serverSetup = setup(60_000, ['-j2', '--server'], true);
+    const serverStart = serverSetup.worker.posted[0] as StartMessage;
 
-    expect(worker.options?.name).toBe('lean-wasm64 -j2 --server');
-    expect(start.type).toBe('start');
-    expect(start.glueUrl).toBe('blob:https://example.test/glue64');
-    expect(start.args).toEqual(['-j2', '--server']);
-    expect(start.stdin.buffer).toBeInstanceOf(SharedArrayBuffer);
-    expect(start.stdin.capacity).toBe(RING_BYTES);
+    expect(serverSetup.worker.options?.name).toBe('lean-wasm64 -j2 --server');
+    expect(serverStart.type).toBe('start');
+    expect(serverStart.glueUrl).toBe('blob:https://example.test/glue64');
+    expect(serverStart.args).toEqual(['-j2', '--server']);
+    expect(serverStart.library).toEqual({});
+    expect(serverStart.opfsPacks).toBeUndefined();
+    expect(serverStart.stdin.buffer).toBeInstanceOf(SharedArrayBuffer);
+    expect(serverStart.stdin.capacity).toBe(RING_BYTES);
+
+    const workerSetup = setup(60_000, ['-j4', '--worker', 'file:///Main.lean'], true);
+    const workerStart = workerSetup.worker.posted[0] as StartMessage;
+    expect(Object.keys(workerStart.library)).toEqual(['lean-init-64.index.json']);
+    expect(workerStart.opfsPacks?.['lean-init-64-00.pack']?.fileName).toBe('p0.bin');
   });
 
   it('ready 后 resolve，stdout 分帧后逐条回调', async () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { unpackLibrary } from './wasm64-process-worker';
+import type { LazyMemfsNode, LazyMemfsStreamOps, SyncPackReader } from './lazy-memfs';
+import { mountLibraries, unpackLibrary } from './wasm64-process-worker';
 
 const sharedCopy = (bytes: Uint8Array): Uint8Array => {
   const view = new Uint8Array(new SharedArrayBuffer(bytes.byteLength));
@@ -35,9 +36,10 @@ describe('unpackLibrary', () => {
         { path: 'Init/B.olean', offset: 2, bytes: 4 },
       ],
     };
+    const chunkBytes = sharedCopy(new Uint8Array([1, 2, 3, 4, 5, 6]));
     const library = {
       'lean-init-64.index.json': sharedCopy(encodeIndex(index)),
-      chunk: sharedCopy(new Uint8Array([1, 2, 3, 4, 5, 6])),
+      chunk: chunkBytes,
     };
 
     const files = unpackLibrary(library);
@@ -45,8 +47,8 @@ describe('unpackLibrary', () => {
     expect(files.map((file) => file.path)).toEqual(['Init/A.olean', 'Init/B.olean']);
     expect([...files[0]!.bytes]).toEqual([1, 2]);
     expect([...files[1]!.bytes]).toEqual([3, 4, 5, 6]);
-    // 写进 MEMFS 的必须是普通缓冲，不能继续引用共享内存。
-    expect(files[0]!.bytes.buffer).not.toBeInstanceOf(SharedArrayBuffer);
+    // 单分片文件零拷贝共享底层 SharedArrayBuffer 视图，不再深拷贝。
+    expect(files[0]!.bytes.buffer).toBe(chunkBytes.buffer);
   });
 
   it('分片索引顺序颠倒时仍按偏移量拼接', () => {
@@ -341,5 +343,143 @@ describe('wasm64-process-worker 消息与运行生命周期', () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it('--server 跳过库文件挂载，--worker 走流式 canOwn 挂载', async () => {
+    const glueSource = `
+      export default async function createLean(opts) {
+        globalThis.__mountedPaths = [];
+        return {
+          wasmMemory: { buffer: new ArrayBuffer(4096) },
+          FS: {
+            mkdirTree: () => {},
+            writeFile: (p, d, o) => globalThis.__mountedPaths.push({ p, bytes: d.byteLength, o }),
+            chdir: () => {},
+            getStream: () => ({ stream_ops: {} }),
+          },
+          callMain: () => {
+            opts.lspProcessExit(0);
+            return 0;
+          },
+        };
+      }
+    `;
+    const index = {
+      chunks: [{ path: 'c.zst', offset: 0, uncompressedBytes: 2 }],
+      files: [{ path: 'Init/A.olean', offset: 0, bytes: 2 }],
+    };
+
+    const serverWorker = await loadWorkerWithGlue(glueSource);
+    serverWorker.fakeSelf.onmessage?.({
+      data: {
+        type: 'start',
+        glueUrl: serverWorker.glueUrl,
+        wasmModule: {} as WebAssembly.Module,
+        library: { 'lean-init-64.index.json': encodeIndex(index), c: new Uint8Array([1, 2]) },
+        stdin: { buffer: new SharedArrayBuffer(64), capacity: 32 },
+        args: ['-j2', '--server'],
+      },
+    } as MessageEvent);
+    await vi.waitFor(() => expect(serverWorker.posted).toContainEqual({ exit: 0 }));
+    const serverPaths = (globalThis as Record<string, unknown>).__mountedPaths as Array<{
+      p: string;
+    }>;
+    expect(serverPaths.some((e) => e.p.includes('.olean'))).toBe(false);
+
+    const fileWorker = await loadWorkerWithGlue(glueSource);
+    fileWorker.fakeSelf.onmessage?.({
+      data: {
+        type: 'start',
+        glueUrl: fileWorker.glueUrl,
+        wasmModule: {} as WebAssembly.Module,
+        library: { 'lean-init-64.index.json': encodeIndex(index), c: new Uint8Array([1, 2]) },
+        stdin: { buffer: new SharedArrayBuffer(64), capacity: 32 },
+        args: ['-j4', '--worker', 'file:///workspace/Main.lean'],
+      },
+    } as MessageEvent);
+    await vi.waitFor(() => expect(fileWorker.posted).toContainEqual({ exit: 0 }));
+    const workerPaths = (globalThis as Record<string, unknown>).__mountedPaths as Array<{
+      p: string;
+      o?: { canOwn?: boolean };
+    }>;
+    expect(workerPaths.find((e) => e.p === '/lean/lib/lean/Init/A.olean')?.o).toEqual({
+      canOwn: true,
+    });
+  });
+
+  it('mountLibraries 支持纯 OPFS 懒挂载、OPFS/SAB 混合跨分片拼接以及失败自动关句柄', async () => {
+    const baseOps: LazyMemfsStreamOps = {
+      read: () => 0,
+      mmap: () => ({ ptr: 0, allocated: true }),
+    };
+    const nodes = new Map<string, LazyMemfsNode>();
+    const writes: Array<{ p: string; data: Uint8Array }> = [];
+    const fs = {
+      mkdirTree: vi.fn(),
+      writeFile: (p: string, data: Uint8Array) => {
+        writes.push({ p, data: new Uint8Array(data) });
+        nodes.set(p, { usedBytes: data.byteLength, contents: data, stream_ops: baseOps });
+      },
+      lookupPath: (p: string) => ({ node: nodes.get(p)! }),
+    };
+    const opfsBytes = new Uint8Array([10, 11, 12, 13]);
+    const readerClosed = vi.fn();
+    const openReader = vi.fn(async (): Promise<SyncPackReader> => ({
+      read: (buf, opts) => {
+        const at = opts?.at ?? 0;
+        const n = Math.min(buf.byteLength, Math.max(0, opfsBytes.byteLength - at));
+        if (n > 0) buf.set(opfsBytes.subarray(at, at + n), 0);
+        return n;
+      },
+      close: readerClosed,
+    }));
+
+    const index = {
+      chunks: [
+        { path: 'c0.zst', offset: 0, uncompressedBytes: 4 },
+        { path: 'c1.zst', offset: 4, uncompressedBytes: 2 },
+      ],
+      files: [
+        { path: 'Init/PureOpfs.olean', offset: 0, bytes: 3 },
+        { path: 'Init/Mixed.olean', offset: 3, bytes: 3 },
+      ],
+    };
+    const readers = await mountLibraries(
+      fs,
+      {
+        'lean-init-64.index.json': encodeIndex(index),
+        c1: new Uint8Array([20, 21]),
+      },
+      {
+        c0: { __opfsPack: true, dir: 'wasm64-test', fileName: 'c0.bin', bytes: 4 },
+      },
+      openReader,
+    );
+
+    expect(readers).toHaveLength(1);
+    const lazyNode = nodes.get('/lean/lib/lean/Init/PureOpfs.olean')!;
+    expect(lazyNode.usedBytes).toBe(3);
+    expect(lazyNode.contents).toBeNull();
+    const out = new Uint8Array(3);
+    expect(lazyNode.stream_ops.read({ node: lazyNode }, out, 0, 3, 0)).toBe(3);
+    expect([...out]).toEqual([10, 11, 12]);
+
+    const mixedWrite = writes.find((w) => w.p === '/lean/lib/lean/Init/Mixed.olean')!;
+    expect([...mixedWrite.data]).toEqual([13, 20, 21]);
+
+    // 校验挂载过程中途失败会关闭已打开的句柄并抛出错误。
+    const badIndex = {
+      chunks: [{ path: 'c0.zst', offset: 0, uncompressedBytes: 4 }],
+      files: [{ path: '../bad.olean', offset: 0, bytes: 2 }],
+    };
+    await expect(
+      mountLibraries(
+        fs,
+        { 'lean-init-64.index.json': encodeIndex(badIndex) },
+        { c0: { __opfsPack: true, dir: 'wasm64-test', fileName: 'c0.bin', bytes: 4 } },
+        openReader,
+      ),
+    ).rejects.toThrow(/非法/);
+    expect(readerClosed).toHaveBeenCalledTimes(1);
   });
 });

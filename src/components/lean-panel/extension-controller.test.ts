@@ -58,6 +58,54 @@ describe('createExtensionController', () => {
     expect(controller.getActiveExtensions()).toEqual(['std']);
   });
 
+  it('首次未启动会话恢复扩展时不误显正在重启文案，排队下载可被 drainExtensionSelections 完整等待', async () => {
+    localStorage.setItem('lean:default-extensions', JSON.stringify(['std']));
+    const host = buildHost();
+    const statuses: string[] = [];
+    let releaseLoad!: () => void;
+    const loadPacks = vi.fn(
+      () =>
+        new Promise<Record<string, ArrayBuffer>>((resolve) => {
+          releaseLoad = () => resolve({ 'lean-std.index.json': new ArrayBuffer(4) });
+        }),
+    );
+
+    const controller = createExtensionController({
+      host,
+      t,
+      requiredExtensions: [],
+      log: () => {},
+      setStatus: (text) => statuses.push(text),
+      closeMenus: () => {},
+      isSessionActive: () => false,
+      restartSession: async () => {},
+      loadPacks,
+    });
+
+    const restoring = controller.restoreSavedExtensions();
+    expect(statuses).toContain(t.statusLoading);
+    expect(statuses).not.toContain(t.libraryRestarting);
+
+    releaseLoad();
+    await restoring;
+
+    // 手动触发按钮下载，确认 drainExtensionSelections 会真正等到在途 Promise 结束。
+    let resolvedManual = false;
+    loadPacks.mockImplementationOnce(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            resolvedManual = true;
+            resolve({ 'lean-batteries.index.json': new ArrayBuffer(4) });
+          }, 10),
+        ),
+    );
+    host.querySelector<HTMLButtonElement>('[data-library="batteries"]')!.click();
+    await controller.drainExtensionSelections();
+    expect(resolvedManual).toBe(true);
+    expect(controller.getActiveExtensions()).toContain('batteries');
+  });
+
   it('切换运行时架构触发 onArchChanged 与重启，并支持 quick-fix 回切加载扩展', async () => {
     const host = buildHost();
     const onArchChanged = vi.fn();
@@ -142,6 +190,7 @@ describe('createExtensionController', () => {
     localStorage.setItem('lean:runtime-arch', 'wasm64');
     const host = buildHost();
     const onArchChanged = vi.fn();
+    const loadPacks = vi.fn().mockResolvedValue({});
     const controller = createExtensionController({
       host,
       t,
@@ -154,6 +203,7 @@ describe('createExtensionController', () => {
       onArchChanged,
       hasExtensionOnArch: () => true,
       resolveIds: (ids) => [...ids],
+      loadPacks,
       probeMemory64: () => true,
       isWasm64Published: () => true,
     });
@@ -166,6 +216,98 @@ describe('createExtensionController', () => {
     await controller.drainExtensionSelections();
     expect(controller.getSelectedArch()).toBe('wasm64');
     expect(onArchChanged).not.toHaveBeenCalled();
+    expect(loadPacks).toHaveBeenCalledWith(['std'], expect.any(Function), 'wasm64');
     expect(controller.getActiveExtensions()).toEqual(['std']);
+    expect(controller.getExtensionPacks()).toEqual({});
+  });
+
+  it('修复跨架构默认勾选串台、按钮进度隔离、切换重载与 clearPackCache 释放', async () => {
+    const host = document.createElement('div');
+    host.innerHTML = `
+      <span data-role="runtime-arch-label"></span>
+      <span data-role="runtime-arch-note"></span>
+      <button data-runtime-arch="wasm32"></button>
+      <button data-runtime-arch="wasm64"></button>
+      <div data-extension-row>
+        <input type="checkbox" data-library-default="std" data-extension-arch="wasm32" />
+        <button data-library="std" data-extension-arch="wasm32"></button>
+      </div>
+      <div data-extension-row>
+        <input type="checkbox" data-library-default="std" data-extension-arch="wasm64" />
+        <button data-library="std" data-extension-arch="wasm64"></button>
+      </div>
+      <button data-role="release-all-libraries"></button>
+    `;
+    let active = true;
+    const restartSession = vi.fn(async () => {});
+    const loadPacks = vi.fn(
+      async (
+        ids: Iterable<string>,
+        onProgress?: (r: number, l: string) => void,
+        arch = 'wasm32',
+      ) => {
+        onProgress?.(0.5, 'Std');
+        return arch === 'wasm32'
+          ? { [`${[...ids][0]}-32.pack`]: new ArrayBuffer(4) }
+          : { [`${[...ids][0]}-64.pack`]: new ArrayBuffer(4) };
+      },
+    );
+
+    const controller = createExtensionController({
+      host,
+      t,
+      requiredExtensions: [],
+      log: () => {},
+      setStatus: () => {},
+      closeMenus: () => {},
+      isSessionActive: () => active,
+      restartSession,
+      hasExtensionOnArch: (_arch, id) => id === 'std',
+      resolveIds: (ids) => [...ids],
+      loadPacks,
+      probeMemory64: () => true,
+      isWasm64Published: () => true,
+    });
+
+    const chk32 = host.querySelector<HTMLInputElement>(
+      '[data-library-default="std"][data-extension-arch="wasm32"]',
+    )!;
+    const chk64 = host.querySelector<HTMLInputElement>(
+      '[data-library-default="std"][data-extension-arch="wasm64"]',
+    )!;
+    const btn32 = host.querySelector<HTMLButtonElement>(
+      '[data-library="std"][data-extension-arch="wasm32"]',
+    )!;
+    const btn64 = host.querySelector<HTMLButtonElement>(
+      '[data-library="std"][data-extension-arch="wasm64"]',
+    )!;
+
+    // 1. wasm32 勾选默认 Std，切到 wasm64 时不得自动勾上 wasm64 的 Std。
+    chk32.checked = true;
+    chk32.dispatchEvent(new Event('change'));
+    host.querySelector<HTMLButtonElement>('[data-runtime-arch="wasm64"]')!.click();
+    expect(chk64.checked).toBe(false);
+
+    // 2. 在 wasm64 点击加载 Std，进度回调只更新 wasm64 按钮且真正调用 loadPacks(..., 'wasm64')。
+    btn64.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(loadPacks).toHaveBeenCalledWith(['std'], expect.any(Function), 'wasm64');
+    expect(btn32.textContent).toBe(t.libraryLoad);
+    expect(btn64.dataset.state).toBe('loaded');
+
+    // 3. 带已加载的 std 从 wasm64 切回 wasm32：自动按新架构重下 32 位 pack 并重启会话。
+    host.querySelector<HTMLButtonElement>('[data-runtime-arch="wasm32"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(controller.getActiveExtensions()).toEqual(['std']);
+    expect(Object.keys(controller.getExtensionPacks())).toEqual(['std-32.pack']);
+    expect(restartSession).toHaveBeenCalledTimes(3);
+
+    // 4. clearPackCache / dispose 立刻清空主线程缓存引用，后续按需可恢复。
+    active = false;
+    controller.clearPackCache();
+    expect(controller.getExtensionPacks()).toEqual({});
+    await controller.restoreSavedExtensions();
+    controller.dispose();
+    expect(controller.getExtensionPacks()).toEqual({});
   });
 });

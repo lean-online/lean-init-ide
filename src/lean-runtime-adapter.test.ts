@@ -44,11 +44,17 @@ describe('createLeanRuntime', () => {
     const memoryEvents: number[] = [];
     const seenOptions: Wasm32ServerOptions[] = [];
     const sab = new SharedArrayBuffer(4);
+    const opfsRef = {
+      __opfsPack: true as const,
+      dir: 'ext-wasm32',
+      fileName: 'std.bin',
+      bytes: 64,
+    };
 
     const handle = await createLeanRuntime({
       arch: 'wasm32',
       memoryTier: 'standard',
-      extensionPacks: { 'lean-std.index.json': sab },
+      extensionPacks: { 'lean-std.index.json': sab, 'lean-std-00.pack': opfsRef },
       activeExtensions: ['std'],
       onStatus: () => {},
       onMemoryBytes: (bytes) => memoryEvents.push(bytes),
@@ -63,6 +69,10 @@ describe('createLeanRuntime', () => {
     expect(handle.arch).toBe('wasm32');
     expect(seenOptions[0]?.lean4?.maxMemoryBytes).toBe(WASM32_MEMORY_BYTES);
     expect(seenOptions[0]?.lean4?.extensionPacks?.['lean-std.index.json']).toBe(sab);
+    expect(
+      (seenOptions[0]?.lean4 as { extensionOpfsPacks?: Record<string, unknown> })
+        ?.extensionOpfsPacks?.['lean-std-00.pack'],
+    ).toEqual(opfsRef);
 
     worker.emit({ memoryBytes: 268_435_456 });
     expect(memoryEvents).toEqual([268_435_456]);

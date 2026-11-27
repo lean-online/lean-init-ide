@@ -13,6 +13,7 @@ import { createWorkerMemorySampler } from './lean-memory-guard';
 import type { LeanSessionServer } from './lean-session';
 import { wasm64Available } from './lean-wasm64-available';
 import type { Wasm64SessionServer } from './lean-wasm64-supervisor';
+import { isOpfsPackRef, type OpfsPackRef } from './opfs-pack-store';
 
 export type EngineStatus = {
   readonly state: string;
@@ -112,6 +113,13 @@ export const createLeanRuntime = async (
         (mod) => () => new mod.default(),
       ));
 
+    const sabExtensionPacks: Record<string, ArrayBufferLike> = {};
+    const opfsExtensionPacks: Record<string, OpfsPackRef> = {};
+    for (const [name, value] of Object.entries(options.extensionPacks)) {
+      if (isOpfsPackRef(value)) opfsExtensionPacks[name] = value;
+      else sabExtensionPacks[name] = value;
+    }
+
     const rawServer = await loadWasm32({
       rootUrl: '/',
       startupTimeoutMs,
@@ -122,8 +130,9 @@ export const createLeanRuntime = async (
       },
       lean4: {
         maxMemoryBytes: WASM32_MEMORY_BYTES,
-        ...(Object.keys(options.extensionPacks).length > 0
-          ? { extensionPacks: options.extensionPacks }
+        ...(Object.keys(sabExtensionPacks).length > 0 ? { extensionPacks: sabExtensionPacks } : {}),
+        ...(Object.keys(opfsExtensionPacks).length > 0
+          ? { extensionOpfsPacks: opfsExtensionPacks }
           : {}),
       },
       createWorker: () => {

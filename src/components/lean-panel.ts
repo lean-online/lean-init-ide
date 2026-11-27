@@ -209,6 +209,7 @@ export const createLeanPanel = (host: HTMLElement, options: LeanPanelOptions): L
     onResetGoalSupport: () => lspProviders.resetGoalSupport(),
     onScheduleGoal: (delayMs) => lspProviders.scheduleGoal(delayMs),
     onUpdateStatement: () => lspProviders.updateStatement(),
+    onReleaseMemory: extensions.clearPackCache,
     createConnection: (server) =>
       createMessageConnection(server.transport.reader, server.transport.writer),
   });
@@ -275,6 +276,7 @@ export const createLeanPanel = (host: HTMLElement, options: LeanPanelOptions): L
 
   window.addEventListener('pagehide', () => {
     sessionCtrl.dispose();
+    extensions.dispose();
     crashRecovery.dispose();
     diagnosticsView.dispose();
     lspProviders.dispose();

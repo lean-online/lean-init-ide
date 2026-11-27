@@ -58,7 +58,7 @@ describe('createSessionController', () => {
     Object.defineProperty(globalThis, 'crossOriginIsolated', { value: false, configurable: true });
   });
 
-  const makeHarness = (crossOriginIsolated = true) => {
+  const makeHarness = (crossOriginIsolated = true, opts?: { deferRestore?: boolean }) => {
     Object.defineProperty(globalThis, 'crossOriginIsolated', {
       value: crossOriginIsolated,
       configurable: true,
@@ -112,6 +112,9 @@ describe('createSessionController', () => {
       dispose: vi.fn(),
     } as unknown as SwBridge;
 
+    const onReleaseMemory = vi.fn();
+    const events: string[] = [];
+    let resolveRestore!: () => void;
     const controller = createSessionController({
       t,
       memoryTier: 'standard',
@@ -129,8 +132,21 @@ describe('createSessionController', () => {
       getActiveExtensions: () => [],
       getExtensionPacks: () => ({}),
       persistSession: vi.fn(),
-      restoreSavedExtensions: async () => {},
-      drainExtensionSelections: async () => {},
+      restoreSavedExtensions: () =>
+        opts?.deferRestore
+          ? new Promise<void>((resolve) => {
+              events.push('restore:start');
+              resolveRestore = () => {
+                events.push('restore:end');
+                resolve();
+              };
+            })
+          : Promise.resolve().then(() => {
+              events.push('restore');
+            }),
+      drainExtensionSelections: async () => {
+        events.push('drain');
+      },
       swBridge,
       diagnosticsView,
       getCrashRecovery: () => crashRecovery,
@@ -138,6 +154,7 @@ describe('createSessionController', () => {
       onResetGoalSupport: vi.fn(),
       onScheduleGoal: vi.fn(),
       onUpdateStatement: vi.fn(),
+      onReleaseMemory,
       createConnection: () =>
         ({
           listen: vi.fn(),
@@ -148,6 +165,7 @@ describe('createSessionController', () => {
           dispose: vi.fn(),
         }) as never,
       createRuntime: async (opts) => {
+        events.push('runtime');
         onMemoryBytesCb = opts.onMemoryBytes;
         onStatusCb = opts.onStatus;
         opts.onStatus({ state: 'loading' });
@@ -164,8 +182,12 @@ describe('createSessionController', () => {
       controller,
       crashRecovery,
       diagnosticsView,
+      startEl,
+      resolveRestore: () => resolveRestore?.(),
+      events,
       logs,
       statuses,
+      onReleaseMemory,
       setCodeValue: (v: string) => {
         code = v;
       },
@@ -173,6 +195,19 @@ describe('createSessionController', () => {
       emitErrorStatus: (msg: string) => onStatusCb?.({ state: 'error', message: msg }),
     };
   };
+
+  it('启动时立即禁用启动按钮并在拉起运行时前排空扩展队列，避免刚启动就二次重启', async () => {
+    const h = makeHarness(true, { deferRestore: true });
+    const startPromise = h.controller.start();
+    // 仍在 restoreSavedExtensions 等待阶段，按钮必须已禁用，且 runtime 尚未开始故 isActive() 为 false。
+    expect(h.startEl.disabled).toBe(true);
+    expect(h.controller.isActive()).toBe(false);
+    h.resolveRestore();
+    expect(await startPromise).toBe(true);
+    expect(h.startEl.disabled).toBe(false);
+    expect(h.events).toEqual(['restore:start', 'restore:end', 'drain', 'runtime']);
+    h.controller.dispose();
+  });
 
   it('不支持跨源隔离时直接展示兼容性错误并拒绝 run', async () => {
     const { controller, diagnosticsView } = makeHarness(false);
@@ -203,6 +238,10 @@ describe('createSessionController', () => {
     // 已就绪后再收到 error 状态交由 crashRecovery。
     h.emitErrorStatus('oom');
     expect(h.crashRecovery.handleCrash).toHaveBeenCalledWith('oom');
+
+    // 达到硬阈值时立刻释放扩展包缓存。
+    h.emitMemory(1024 * 1024 * 1024);
+    expect(h.onReleaseMemory).toHaveBeenCalledTimes(1);
 
     h.controller.stop();
     expect(h.controller.isReady()).toBe(false);

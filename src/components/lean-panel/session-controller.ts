@@ -49,6 +49,7 @@ export type SessionControllerOptions = {
   readonly onResetGoalSupport: () => void;
   readonly onScheduleGoal: (delayMs?: number) => void;
   readonly onUpdateStatement: () => void;
+  readonly onReleaseMemory?: () => void;
   readonly createRuntime?: typeof createLeanRuntime;
   readonly createConnection: (server: LeanSessionServer) => MessageConnection;
 };
@@ -66,6 +67,7 @@ export const createSessionController = (options: SessionControllerOptions) => {
   let debounceTimer: number | undefined;
   let autoStartTimer: number | undefined;
   let startInflight: Promise<boolean> | null = null;
+  let startingRuntime = false;
   let engineEverReady = false;
   let suppressSync = false;
   let freshHandled = false;
@@ -95,6 +97,7 @@ export const createSessionController = (options: SessionControllerOptions) => {
     onRecycle: ({ peakBytes, reason }) => {
       const mb = formatMb(peakBytes);
       if (reason === 'background-hidden') {
+        options.onReleaseMemory?.();
         if (!session.isReady) return;
         options.log(t.logMemoryBackgroundRelease(mb));
         stop();
@@ -108,6 +111,7 @@ export const createSessionController = (options: SessionControllerOptions) => {
     onHardLimit: ({ bytes, maxBytes }) => {
       options.log(t.logMemoryHardLimit(formatMb(bytes), formatMb(maxBytes)));
       reportError('memory-limit', `${formatMb(bytes)}/${formatMb(maxBytes)} MB`);
+      options.onReleaseMemory?.();
       stop();
       options.setStatus(t.statusMemoryLimit, 'error');
     },
@@ -209,7 +213,7 @@ export const createSessionController = (options: SessionControllerOptions) => {
   };
 
   const runStart = async (): Promise<boolean> => {
-    startEl.disabled = true;
+    startingRuntime = true;
     lastStartError = null;
     swBridge.clearLastAssetFallback();
     swBridge.resetProgressState();
@@ -254,8 +258,7 @@ export const createSessionController = (options: SessionControllerOptions) => {
       options.getCrashRecovery().onStartFailed(message, error);
       return false;
     } finally {
-      startInflight = null;
-      startEl.disabled = false;
+      startingRuntime = false;
     }
   };
 
@@ -269,11 +272,17 @@ export const createSessionController = (options: SessionControllerOptions) => {
       diagnosticsView.showLoadFailure(message, true);
       return Promise.resolve(false);
     }
+    // 刚点下启动就立刻禁用按钮，并在同一轮启动前排空排队中的扩展变更，避免首启后二次重启。
+    startEl.disabled = true;
     startInflight = (async () => {
-      await options.restoreSavedExtensions();
-      const started = await runStart();
-      void options.drainExtensionSelections();
-      return started;
+      try {
+        await options.restoreSavedExtensions();
+        await options.drainExtensionSelections();
+        return await runStart();
+      } finally {
+        startInflight = null;
+        startEl.disabled = false;
+      }
     })();
     return startInflight;
   };
@@ -305,7 +314,7 @@ export const createSessionController = (options: SessionControllerOptions) => {
     getLastEditAt: () => lastEditAt,
     getRunStartedAt: () => runStartedAt,
     isReady: () => session.isReady,
-    isActive: () => session.isReady || startInflight !== null,
+    isActive: () => session.isReady || startingRuntime,
     isReadyOrStarting: () => session.isReady || session.state === 'starting',
     whenReady: () => session.whenReady(),
     request: <T>(method: string, params: unknown) => session.request<T>(method, params),

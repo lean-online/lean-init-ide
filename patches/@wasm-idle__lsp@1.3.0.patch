@@ -219,19 +219,20 @@ index a53db81..63d6c19 100644
          reportProgress(progress) {
              loaded.set(progress.assetKey, progress.loadedBytes);
 diff --git a/dist/lean4/language-server.js b/dist/lean4/language-server.js
-index 8c0413a..dc3deff 100644
+index 8c0413a..c0100db 100644
 --- a/dist/lean4/language-server.js
 +++ b/dist/lean4/language-server.js
-@@ -123,6 +123,7 @@ export async function getLean4LanguageServer(options) {
+@@ -123,6 +123,8 @@ export async function getLean4LanguageServer(options) {
              initOptions: {
                  baseUrl: config.baseUrl,
                  maxMemoryBytes,
 +                extensionPacks: host?.lean4?.extensionPacks,
++                extensionOpfsPacks: host?.lean4?.extensionOpfsPacks,
                  processStartupTimeoutMs: host?.startupTimeoutMs,
                  assetTimeoutMs: host?.assetTimeoutMs,
                  maxAssetBytes: host?.maxAssetBytes
 diff --git a/dist/lean4/runtime-worker.js b/dist/lean4/runtime-worker.js
-index cd8db8b..0164203 100644
+index cd8db8b..f4ed856 100644
 --- a/dist/lean4/runtime-worker.js
 +++ b/dist/lean4/runtime-worker.js
 @@ -20,38 +20,45 @@ globalThis.Worker = class {
@@ -309,7 +310,23 @@ index cd8db8b..0164203 100644
  	}
  	return files;
  }
-@@ -72,17 +79,26 @@ self.onmessage = async ({ data }) => {
+@@ -64,25 +71,42 @@ self.onmessage = async ({ data }) => {
+ 		else thread?.onmessage?.({ data: event.data });
+ 		return;
+ 	}
++	const openedReaders = [];
++	const closeReaders = () => {
++		for (const reader of openedReaders) {
++			try { reader.close(); } catch {}
++		}
++		openedReaders.length = 0;
++	};
+ 	try {
+ 		let exited = false;
+ 		const onExit = (code) => {
++			closeReaders();
+ 			if (!exited) {
+ 				exited = true;
  				self.postMessage({ exit: code });
  			}
  		};
@@ -341,7 +358,7 @@ index cd8db8b..0164203 100644
  			mainScriptUrlOrBlob: data.glueUrl,
  			instantiateWasm(imports, receive) {
  				WebAssembly.instantiate(data.wasmModule, imports).then((instance) =>
-@@ -101,6 +117,7 @@ self.onmessage = async ({ data }) => {
+@@ -101,6 +125,7 @@ self.onmessage = async ({ data }) => {
  			stream.stream_ops = {
  				...stream.stream_ops,
  				write(_stream, buffer, offset, length) {
@@ -349,19 +366,163 @@ index cd8db8b..0164203 100644
  					if (length)
  						self.postMessage(
  							fd === 1
-@@ -135,14 +152,16 @@ self.onmessage = async ({ data }) => {
+@@ -135,17 +160,161 @@ self.onmessage = async ({ data }) => {
  				0, 0, 0, 0, 0, 0, 85, 84, 67, 0, 10, 85, 84, 67, 48, 10
  			])
  		);
 -		for (const file of unpackLibrary(data.library)) {
-+		const isServerBootstrap = Array.isArray(data.args) && data.args.includes('--server');
-+		for (const file of (isServerBootstrap ? [] : unpackLibrary(data.library))) {
- 			const path = LIBRARY_ROOT + '/' + file.path;
- 			lean.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
- 			// Copy into this process: a document's #eval must never modify the shared source pack.
+-			const path = LIBRARY_ROOT + '/' + file.path;
+-			lean.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+-			// Copy into this process: a document's #eval must never modify the shared source pack.
 -			lean.FS.writeFile(path, file.bytes);
-+			lean.FS.writeFile(path, file.bytes, { canOwn: true });
++		const isServerBootstrap = Array.isArray(data.args) && data.args.includes('--server');
++		const hasOpfsPacks = !isServerBootstrap && data.library && Object.values(data.library).some((v) => v && v.__opfsPack === true);
++		if (hasOpfsPacks) {
++			const root = await navigator.storage.getDirectory();
++			const packRoot = await root.getDirectoryHandle('lean-packs-v1');
++			const readerCache = new Map();
++			const openSync = async (ref) => {
++				const cacheKey = ref.dir + '/' + ref.fileName;
++				if (readerCache.has(cacheKey)) return readerCache.get(cacheKey);
++				const dirH = await packRoot.getDirectoryHandle(ref.dir);
++				const fileH = await dirH.getFileHandle(ref.fileName);
++				const openOnce = async () => {
++					try { return await fileH.createSyncAccessHandle({ mode: 'read-only' }); }
++					catch (e) { if (e instanceof TypeError || e?.name === 'NotSupportedError') return await fileH.createSyncAccessHandle(); throw e; }
++				};
++				const delays = [20, 40, 80, 160, 320];
++				let reader;
++				for (let attempt = 0; ; attempt++) {
++					try { reader = await openOnce(); break; }
++					catch (e) {
++						if (e?.name === 'NoModificationAllowedError' && attempt < delays.length) {
++							await new Promise((r) => setTimeout(r, delays[attempt]));
++							continue;
++						}
++						throw e;
++					}
++				}
++				readerCache.set(cacheKey, reader);
++				openedReaders.push(reader);
++				return reader;
++			};
++			const readSegs = (segs, pos, dst, dstOff, len, scratch) => {
++				let segStart = 0, totalRead = 0;
++				const isShared = typeof SharedArrayBuffer === 'function' && dst.buffer instanceof SharedArrayBuffer;
++				for (const seg of segs) {
++					const segEnd = segStart + seg.byteLength;
++					const rs = Math.max(pos, segStart), re = Math.min(pos + len, segEnd);
++					if (rs < re) {
++						const need = re - rs, atBase = seg.fileOffset + (rs - segStart), outBase = dstOff + (rs - pos);
++						let done = 0;
++						while (done < need) {
++							if (isShared) {
++								const step = Math.min(need - done, scratch.byteLength);
++								const n = seg.reader.read(scratch.subarray(0, step), { at: atBase + done });
++								if (n <= 0) break;
++								dst.set(scratch.subarray(0, n), outBase + done);
++								done += n;
++							} else {
++								const n = seg.reader.read(dst.subarray(outBase + done, outBase + need), { at: atBase + done });
++								if (n <= 0) break;
++								done += n;
++							}
++						}
++						totalRead += done;
++						if (done < need) break;
++					}
++					segStart = segEnd;
++				}
++				return totalRead;
++			};
++			const opsCache = new WeakMap();
++			const empty = new Uint8Array(0);
++			const createdDirs = new Set();
++			const indexPaths = Object.keys(data.library).filter((n) => n.endsWith('.index.json')).sort();
++			if (!indexPaths.includes('lean-init.index.json')) throw new Error('Lean library index is missing.');
++			for (const indexPath of indexPaths) {
++				const index = JSON.parse(new TextDecoder().decode(new Uint8Array(data.library[indexPath])));
++				const chunks = [];
++				for (const chunk of index.chunks) {
++					const entry = data.library[chunk.path.replace(/\.(gz|zst)(\.bin)?$/, '')];
++					if (entry && entry.__opfsPack === true && entry.bytes === chunk.uncompressedBytes) {
++						chunks.push({ ...chunk, kind: 'opfs', reader: await openSync(entry) });
++					} else if (entry instanceof Uint8Array && entry.byteLength === chunk.uncompressedBytes) {
++						chunks.push({ ...chunk, kind: 'sab', bytes: entry });
++					} else {
++						throw new Error(`Lean library chunk ${chunk.path} is missing.`);
++					}
++				}
++				for (const file of index.files) {
++					if (!/^(Init|Std|Batteries)(\/[A-Za-z0-9_.-]+)*\.(olean(\.server|\.private)?|ilean|ir(\.sig)?)$/.test(file.path))
++						throw new Error(`Lean library entry ${file.path} is invalid.`);
++					const overlaps = [];
++					let covered = 0;
++					for (const chunk of chunks) {
++						const start = Math.max(file.offset, chunk.offset);
++						const end = Math.min(file.offset + file.bytes, chunk.offset + chunk.uncompressedBytes);
++						if (start < end) { overlaps.push({ chunk, ls: start - chunk.offset, le: end - chunk.offset }); covered += end - start; }
++					}
++					if (covered !== file.bytes) throw new Error(`Lean library entry ${file.path} is truncated.`);
++					const target = LIBRARY_ROOT + '/' + file.path;
++					const dir = target.slice(0, target.lastIndexOf('/'));
++					if (!createdDirs.has(dir)) { lean.FS.mkdirTree(dir); createdDirs.add(dir); }
++					if (overlaps.length > 0 && overlaps.every((o) => o.chunk.kind === 'opfs')) {
++						const segs = overlaps.map((o) => ({ reader: o.chunk.reader, fileOffset: o.ls, byteLength: o.le - o.ls }));
++						lean.FS.writeFile(target, empty);
++						const node = lean.FS.lookupPath(target).node;
++						let lazyOps = opsCache.get(node.stream_ops);
++						if (!lazyOps) {
++							const baseOps = node.stream_ops;
++							const scratch = new Uint8Array(256 * 1024);
++							lazyOps = {
++								...baseOps,
++								read(stream, buf, off, len, pos) {
++									const s = stream.node.__lazySegments;
++									if (!s) return baseOps.read(stream, buf, off, len, pos);
++									const toRead = Math.min(Math.max(0, stream.node.usedBytes - pos), len);
++									return toRead <= 0 ? 0 : readSegs(s, pos, buf, off, toRead, scratch);
++								},
++								mmap(stream, len, pos, prot, flags) {
++									const s = stream.node.__lazySegments;
++									if (!s || !baseOps.mmap) return baseOps.mmap?.(stream, len, pos, prot, flags);
++									const actual = Math.min(Math.max(0, stream.node.usedBytes - pos), len);
++									const temp = new Uint8Array(actual);
++									if (actual > 0) readSegs(s, pos, temp, 0, actual, scratch);
++									stream.node.contents = temp;
++									try { return baseOps.mmap(stream, len, 0, prot, flags); } finally { stream.node.contents = null; }
++								},
++							};
++							opsCache.set(baseOps, lazyOps);
++						}
++						node.usedBytes = file.bytes;
++						node.contents = null;
++						node.__lazySegments = segs;
++						node.stream_ops = lazyOps;
++					} else if (overlaps.length === 1 && overlaps[0].chunk.kind === 'sab') {
++						lean.FS.writeFile(target, overlaps[0].chunk.bytes.subarray(overlaps[0].ls, overlaps[0].le), { canOwn: true });
++					} else {
++						const out = new Uint8Array(file.bytes);
++						let w = 0;
++						for (const o of overlaps) {
++							const n = o.le - o.ls;
++							if (o.chunk.kind === 'sab') out.set(o.chunk.bytes.subarray(o.ls, o.le), w);
++							else readSegs([{ reader: o.chunk.reader, fileOffset: o.ls, byteLength: n }], 0, out, w, n, new Uint8Array(0));
++							w += n;
++						}
++						lean.FS.writeFile(target, out, { canOwn: true });
++					}
++				}
++			}
++		} else {
++			for (const file of (isServerBootstrap ? [] : unpackLibrary(data.library))) {
++				const path = LIBRARY_ROOT + '/' + file.path;
++				lean.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
++				// Copy into this process: a document's #eval must never modify the shared source pack.
++				lean.FS.writeFile(path, file.bytes, { canOwn: true });
++			}
  		}
++		data.library = null;
  		lean.FS.chdir('/workspace');
 -		self.postMessage({ ready: true });
 +		lastMemoryBytes = wasmMemory.buffer.byteLength;
@@ -369,8 +530,12 @@ index cd8db8b..0164203 100644
  		const code = lean.callMain(data.args);
  		onExit(code);
  	} catch (error) {
++		closeReaders();
+ 		self.postMessage({ error: String(error), stack: error?.stack });
+ 	}
+ };
 diff --git a/dist/lean4/worker.js b/dist/lean4/worker.js
-index ecf242e..dbaaaf2 100644
+index ecf242e..aaee5ca 100644
 --- a/dist/lean4/worker.js
 +++ b/dist/lean4/worker.js
 @@ -34,6 +34,7 @@ const unsupported = new Set([
@@ -420,7 +585,20 @@ index ecf242e..dbaaaf2 100644
              for (const pthread of pthreads.values())
                  pthread.terminate();
              pthreads.clear();
-@@ -190,7 +200,7 @@ async function openDocument(document) {
+@@ -152,10 +162,11 @@ function startProcess(args, pool, output, exit) {
+         }
+     };
+     startupTimer = setTimeout(() => failProcess('Lean document process startup timed out.'), processStartupTimeoutMs);
++    const isBootstrap = Array.isArray(args) && args.includes('--server');
+     worker.postMessage({
+         args,
+         stdin: stdin.descriptor,
+-        library,
++        library: isBootstrap ? null : library,
+         wasmModule,
+         glueUrl,
+         maxMemoryBytes
+@@ -190,7 +201,7 @@ async function openDocument(document) {
      serverRequests.clear();
      active = { ...document };
      const token = ++generation;
@@ -429,7 +607,25 @@ index ecf242e..dbaaaf2 100644
          if (token === generation)
              fileOutput(message);
      }, (code) => {
-@@ -376,16 +386,29 @@ async function init(data) {
+@@ -342,6 +353,8 @@ async function handle(message) {
+             fileProcess?.dispose();
+             bootstrap?.dispose();
+             fileProcess = bootstrap = undefined;
++            library = wasmModule = undefined;
++            glueText = '';
+             cancelPending('Lean LSP shut down.', true);
+             if (message.id !== undefined)
+                 send({ jsonrpc: '2.0', id: message.id, result: null });
+@@ -362,6 +375,8 @@ function fail(cause) {
+     bootstrap?.dispose();
+     fileProcess?.dispose();
+     bootstrap = fileProcess = undefined;
++    library = wasmModule = undefined;
++    glueText = '';
+     active = undefined;
+     serverRequests.clear();
+     scope.postMessage({ type: 'error', message });
+@@ -376,16 +391,39 @@ async function init(data) {
          assetTimeoutMs: data.options.assetTimeoutMs ?? 120000,
          maxAssetBytes: data.options.maxAssetBytes ?? 128 * 1024 ** 2
      });
@@ -441,6 +637,16 @@ index ecf242e..dbaaaf2 100644
 -    });
 +    })) };
      library = {};
++    let opfsInitDir;
++    try {
++        if (navigator?.storage?.getDirectory) {
++            const root = await navigator.storage.getDirectory();
++            const packRoot = await root.getDirectoryHandle('lean-packs-v1', { create: true });
++            opfsInitDir = await packRoot.getDirectoryHandle('wasm32', { create: true });
++        }
++    } catch {
++        opfsInitDir = undefined;
++    }
      for (const [name, receipt] of Object.entries(profile.assets)) {
          const delivered = payload[name];
          let bytes = delivered;
@@ -462,10 +668,42 @@ index ecf242e..dbaaaf2 100644
              const stream = new Blob([new Uint8Array(delivered)])
                  .stream()
                  .pipeThrough(new DecompressionStream('gzip'));
-@@ -418,6 +441,18 @@ async function init(data) {
-             shared.set(bytes);
-             library[logicalName] = shared;
-         }
+@@ -414,11 +452,55 @@ async function init(data) {
+         else if (name === 'lean.mjs')
+             glueText = new TextDecoder().decode(bytes);
+         else if (name === 'lean-init.index.json' || logicalName.endsWith('.pack')) {
++            let storedInOpfs = false;
++            if (opfsInitDir && logicalName.endsWith('.pack')) {
++                try {
++                    const hashTag = (receipt.uncompressed?.sha256 ?? receipt.sha256).slice(0, 16);
++                    const fileName = `${logicalName.replace(/[^A-Za-z0-9._-]/g, '_')}.${hashTag}.bin`;
++                    const fh = await opfsInitDir.getFileHandle(fileName, { create: true });
++                    if (typeof fh.createSyncAccessHandle === 'function') {
++                        const sh = await fh.createSyncAccessHandle();
++                        try {
++                            if (sh.getSize() !== bytes.length) {
++                                sh.truncate(0);
++                                const view = new Uint8Array(bytes);
++                                let off = 0;
++                                while (off < view.length) off += sh.write(view.subarray(off), { at: off });
++                                sh.flush();
++                            }
++                        } finally {
++                            sh.close();
++                        }
++                        library[logicalName] = { __opfsPack: true, dir: 'wasm32', fileName, bytes: bytes.length };
++                        storedInOpfs = true;
++                    }
++                } catch {
++                    storedInOpfs = false;
++                }
++            }
++            if (!storedInOpfs) {
++                const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
++                shared.set(bytes);
++                library[logicalName] = shared;
++            }
++        }
 +        delete payload[name];
 +    }
 +    zstdDecoder = undefined;
@@ -474,14 +712,20 @@ index ecf242e..dbaaaf2 100644
 +            library[name] = new Uint8Array(buffer);
 +        } else {
 +            const bytes = new Uint8Array(buffer);
-+            const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
-+            shared.set(bytes);
+             const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+             shared.set(bytes);
+-            library[logicalName] = shared;
 +            library[name] = shared;
-+        }
+         }
      }
++    for (const [name, ref] of Object.entries(data.options.extensionOpfsPacks ?? {})) {
++        if (ref && ref.__opfsPack === true)
++            library[name] = ref;
++    }
      bootstrap = startProcess(['-j2', '--server'], 8, (message) => {
          if (!message.method && message.id === initializeId && message.result) {
-@@ -453,6 +488,11 @@ scope.onmessage = ({ data }) => {
+             // These capabilities belong to the native project watchdog, not the FileWorker.
+@@ -453,6 +535,11 @@ scope.onmessage = ({ data }) => {
              worker?.onmessage?.({ data: data.data });
          return;
      }
@@ -494,15 +738,17 @@ index ecf242e..dbaaaf2 100644
          .then(async () => {
          await restarting;
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index 209ea07..b07f242 100644
+index 209ea07..26b07f0 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
-@@ -63,6 +63,8 @@ export interface EditorLanguageServerRuntimeOptions {
+@@ -63,6 +63,10 @@ export interface EditorLanguageServerRuntimeOptions {
          baseUrl?: string;
          /** Per-document shared Wasm memory ceiling; defaults to 1 GiB. */
          maxMemoryBytes?: number;
 +        /** Extra verified library packs (logicalName -> compressed bytes) mounted with Init. */
 +        extensionPacks?: Record<string, ArrayBufferLike>;
++        /** OPFS pack references mounted lazily without SharedArrayBuffer copies. */
++        extensionOpfsPacks?: Record<string, { __opfsPack: true; dir: string; fileName: string; bytes: number }>;
      };
      nim?: {
          /** External, pinned nimlsp/nimsuggest browser assets. */
