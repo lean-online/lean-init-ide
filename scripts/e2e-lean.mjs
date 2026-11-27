@@ -29,7 +29,167 @@ const waitForGateway = async () => {
 };
 
 const badLogPattern =
-  /分片回退|Failed to fetch|运行时错误|Runtime error|RuntimeError|pthread failed/i;
+  /分片回退|Failed to fetch|运行时错误|Runtime error|RuntimeError|pthread failed|InvalidStateError|access handle was already closed/i;
+
+/**
+ * wasm64 + OPFS 门禁：切换架构 -> initialize -> 真实 .olean 经 OPFS 同步句柄读取并出诊断，
+ * 且 initialize 之后进程必须持续存活（不得崩溃重启循环）。
+ */
+const runWasm64Gate = async (context, stamp) => {
+  const page = await context.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.goto(`${origin}/zh/playground?debug`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-role="start"]');
+
+  const support = await page.evaluate(() => {
+    const memory64 = (() => {
+      try {
+        new WebAssembly.Memory({ initial: 1, maximum: 16, shared: true, index: 'i64' });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    return { memory64, opfs: typeof navigator.storage?.getDirectory === 'function' };
+  });
+  if (!support.memory64 || !support.opfs) {
+    throw new Error(`wasm64 门禁要求 Memory64 与 OPFS，浏览器能力：${JSON.stringify(support)}`);
+  }
+
+  // 面板水合前点击会丢失（监听器尚未挂上），因此反复尝试直到架构真的切换成功。
+  const switchDeadline = Date.now() + 30_000;
+  let switched = false;
+  while (Date.now() < switchDeadline && !switched) {
+    const outcome = await page.evaluate(() => {
+      const button = globalThis.document.querySelector('[data-runtime-arch="wasm64"]');
+      if (!button) return 'missing';
+      if (button.getAttribute('aria-checked') === 'true') return 'active';
+      if (button.disabled) return 'disabled';
+      button.click();
+      return 'clicked';
+    });
+    if (outcome === 'active') switched = true;
+    else await page.waitForTimeout(500);
+  }
+  if (!switched) {
+    throw new Error('wasm64 架构切换失败：按钮缺失/不可用（未发布或浏览器不支持）或点击无响应');
+  }
+  console.log(`[${stamp()}] wasm64: 已切换架构`);
+  await page.click('[data-role="start"]');
+
+  const read = () =>
+    page.evaluate(() => {
+      const runOk = globalThis.document.querySelector('[data-role="run-ok"]');
+      return {
+        state: globalThis.document.querySelector('[data-role="status"]')?.dataset.state,
+        status: globalThis.document.querySelector('[data-role="status"]')?.textContent ?? '',
+        log: globalThis.document.querySelector('[data-role="log"]')?.textContent ?? '',
+        runOk: {
+          visible: Boolean(runOk) && !runOk.hidden,
+          text: (runOk?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        },
+        diagnostics: [...globalThis.document.querySelectorAll('[data-role="diagnostics"] li')].map(
+          (node) => (node.textContent ?? '').trim(),
+        ),
+      };
+    });
+  const failIfBad = (snapshot, stage) => {
+    if (badLogPattern.test(snapshot.log) || snapshot.state === 'error' || pageErrors.length > 0) {
+      throw new Error(
+        `wasm64 ${stage}失败：state=${snapshot.state} pageErrors=${JSON.stringify(pageErrors)}\n${snapshot.log}`,
+      );
+    }
+  };
+
+  const setSource = (source) =>
+    page.evaluate((value) => {
+      const editor = globalThis.__editor;
+      if (!editor) throw new Error('debug editor handle missing');
+      editor.setValue(value);
+    }, source);
+  const deadline = Date.now() + timeoutMs;
+  let initialized = false;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(1000);
+    const snapshot = await read();
+    failIfBad(snapshot, '启动');
+    if (snapshot.state === 'ready' && snapshot.log.includes('initialize 完成')) {
+      initialized = true;
+      break;
+    }
+  }
+  if (!initialized) throw new Error(`wasm64 等待 initialize 超时：${(await read()).status}`);
+
+  // 编辑器会恢复上一阶段留下的本地草稿，这里固定源码，保证必须经 OPFS 读取 Init .olean 才能出诊断。
+  await setSource('theorem w64_demo : 1 + 1 = 2 := by\n  sorry\n\n#check Classical.choice\n');
+  let ready = false;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(1000);
+    const snapshot = await read();
+    failIfBad(snapshot, 'Init 诊断');
+    if (
+      snapshot.state === 'ready' &&
+      snapshot.diagnostics.some((item) => item.includes('sorry')) &&
+      snapshot.diagnostics.some((item) => item.includes('Classical.choice')) &&
+      snapshot.runOk.visible &&
+      snapshot.runOk.text.includes('1 个警告')
+    ) {
+      ready = true;
+      break;
+    }
+  }
+  if (!ready) {
+    const last = await read();
+    throw new Error(
+      `wasm64 等待 Init 诊断超时：${last.status} (${last.state})\n` +
+        `诊断：${JSON.stringify(last.diagnostics)}\n运行通过提示：${JSON.stringify(last.runOk)}\n` +
+        `pageErrors：${JSON.stringify(pageErrors)}\n日志：\n${last.log}`,
+    );
+  }
+  console.log(`[${stamp()}] wasm64: initialize 完成且 Init 诊断正常`);
+
+  // 句柄被提前关闭的崩溃会在 initialize 之后 1 秒内出现并反复重启，这里持续观察。
+  for (let i = 0; i < 5; i += 1) {
+    await page.waitForTimeout(1000);
+    const snapshot = await read();
+    failIfBad(snapshot, 'initialize 之后存活检查');
+    if (snapshot.state !== 'ready') {
+      throw new Error(`wasm64 initialize 之后状态变为 ${snapshot.state}：${snapshot.status}`);
+    }
+  }
+
+  await setSource('example : 2 + 2 = 4 := rfl');
+  const passDeadline = Date.now() + Math.min(timeoutMs, 60_000);
+  let passed = false;
+  while (Date.now() < passDeadline) {
+    await page.waitForTimeout(500);
+    const snapshot = await read();
+    failIfBad(snapshot, '二次编译');
+    if (
+      snapshot.runOk.visible &&
+      snapshot.runOk.text.includes('运行通过') &&
+      snapshot.runOk.text.includes('没有错误')
+    ) {
+      passed = true;
+      break;
+    }
+  }
+  if (!passed) throw new Error('wasm64 无错误代码没有显示运行通过提示框');
+
+  const opfsPacks = await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    try {
+      await root.getDirectoryHandle('lean-packs-v1');
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!opfsPacks) throw new Error('OPFS 中没有 lean-packs-v1，懒挂载路径未被实际走到');
+  console.log(`[${stamp()}] wasm64: OPFS 同步句柄读取、二次编译与存活检查通过`);
+  await page.close();
+};
 
 const main = async () => {
   await waitForGateway();
@@ -496,6 +656,12 @@ const main = async () => {
       );
     }
     console.log(`[${stamp()}] 速查表 / 英文路由 / 遥测端点 / 根路径规范入口 / SSG 与 CLS 校验正常`);
+
+    // 第十二阶段：真实 Chrome + OPFS 的 wasm64 门禁（LEAN_E2E_WASM64=1）。
+    // PR #88 曾因只测 wasm32，让 wasm64 在 initialize 后 OPFS 句柄被提前关闭而崩溃循环上线。
+    if (process.env.LEAN_E2E_WASM64 === '1') {
+      await runWasm64Gate(context, stamp);
+    }
     console.log(`E2E PASS: ${result.initializeLine?.trim()}`);
   } finally {
     await browser.close();

@@ -8,6 +8,10 @@ inputs:
     description: 是否下载 Std / Batteries 扩展分片（1/0）
     required: false
     default: '0'
+  wasm64:
+    description: 是否下载 wasm64 运行时基础分片（1/0）
+    required: false
+    default: '0'
   assets-cache-key:
     description: public/wasm-lean4 的缓存键（调用方按是否含扩展分包区分）
     required: true
@@ -34,10 +38,12 @@ runs:
         path: public/wasm-lean4
         key: ${{ inputs.assets-cache-key }}
     - name: 准备 Lean 资产
-      # 工程实战课直接编译 Std / Batteries，课程 E2E 必须能像生产一样提供扩展分包。
+      # 工程实战课直接编译 Std / Batteries，课程 E2E 必须能像生产一样提供扩展分包；
+      # 开启 wasm64 时同步拉取 wasm64 基础分片供真实 Chrome + OPFS 门禁测试。
       shell: bash
       env:
         LEAN_FETCH_EXTENSIONS: ${{ inputs.extensions }}
+        LEAN_FETCH_WASM64: ${{ inputs.wasm64 }}
       run: pnpm run fetch:assets
     # build:web 的 dist 不含 wasm-lean4；小资产（index.json/lean.mjs 等）不走 SW，
     # 必须补回静态副本，否则会落到网关的 SPA 回退。

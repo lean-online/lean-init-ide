@@ -272,11 +272,13 @@ jobs:
       - name: 准备 E2E 环境
         uses: ./.github/actions/e2e-prepare
         with:
-          # 和 deploy / modelscope 共用基础资产缓存。
-          assets-cache-key: lean-assets-${{ hashFiles('config/lean4-runtime.json') }}
+          wasm64: '1'
+          # 包含 wasm64 运行时分片，单独区分缓存键，避免污染 deploy / modelscope 基础缓存。
+          assets-cache-key: lean-assets-${{ hashFiles('config/lean4-runtime.json', 'config/lean4-wasm64-runtime.json') }}-wasm64
       - name: 浏览器启动 Lean 并检查诊断
         env:
           LEAN_E2E_CHANNEL: chrome
+          LEAN_E2E_WASM64: '1'
         run: node scripts/e2e-lean.mjs
       - name: 失败时保留网关日志
         if: failure()

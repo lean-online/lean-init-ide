@@ -360,7 +360,8 @@ const start = async (data: StartMessage): Promise<void> => {
       mainScriptUrlOrBlob: data.glueUrl,
       lspStdin: data.stdin,
       lspProcessExit: (code: number) => {
-        closeReaders();
+        // PROXY_TO_PTHREAD 下 main 派发后主线程立即触发 exit(0)，真实进程仍在 pthread 上运行，不能提前关闭 OPFS 句柄。
+        if (code !== 0) closeReaders();
         scope.postMessage({ exit: code });
       },
       onMemoryResize: (memoryBytes: number) => scope.postMessage({ memoryBytes }),
